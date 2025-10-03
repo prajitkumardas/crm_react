@@ -85,7 +85,7 @@ AS $$
 $$;
 
 -- Enable RLS on all tables
--- ALTER TABLE organizations ENABLE ROW LEVEL SECURITY; -- Temporarily disabled for testing
+ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE packages ENABLE ROW LEVEL SECURITY;
