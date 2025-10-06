@@ -32,6 +32,10 @@ export default function Settings({ profile, organization, onUpdate }) {
   const handleSaveOrganization = async () => {
     setLoading(true)
     try {
+      if (!organization?.id) {
+        throw new Error('Organization data is missing. Please refresh the page and try again.')
+      }
+
       const { error } = await supabase
         .from('organizations')
         .update({
@@ -41,13 +45,16 @@ export default function Settings({ profile, organization, onUpdate }) {
         })
         .eq('id', organization.id)
 
-      if (error) throw error
+      if (error) {
+        console.error('Supabase error:', error)
+        throw new Error(`Database error: ${error.message}`)
+      }
 
       alert('Organization settings saved successfully!')
       onUpdate?.()
     } catch (error) {
       console.error('Error saving organization:', error)
-      alert('Error saving organization settings')
+      alert(`Error saving organization settings: ${error.message}`)
     } finally {
       setLoading(false)
     }

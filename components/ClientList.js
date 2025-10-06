@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { getStatusColor, getStatusLabel } from '../lib/packageUtils'
+import { exportClientsToExcel } from '../lib/exportUtils'
+import ClientForm from './ClientForm'
+import ConfirmationDialog from './ConfirmationDialog'
 
 export default function ClientList({ organizationId, onClientSelect }) {
   const [clients, setClients] = useState([])
@@ -10,12 +13,38 @@ export default function ClientList({ organizationId, onClientSelect }) {
   const [clientPackages, setClientPackages] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
   const [showForm, setShowForm] = useState(false)
+  const [openMenuId, setOpenMenuId] = useState(null)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [clientToDelete, setClientToDelete] = useState(null)
+
+  // Advanced filter states
+  const [showFilters, setShowFilters] = useState(false)
+  const [packageCategory, setPackageCategory] = useState('')
+  const [packageType, setPackageType] = useState('')
+  const [clientStatuses, setClientStatuses] = useState([])
+  const [joinStatus, setJoinStatus] = useState('')
+  const [gender, setGender] = useState('')
+  const [ageGroup, setAgeGroup] = useState('')
 
   useEffect(() => {
     fetchData()
   }, [organizationId])
+
+  // Close menu and filters when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (openMenuId && !event.target.closest('.menu-container')) {
+        setOpenMenuId(null)
+      }
+      if (showFilters && !event.target.closest('.filters-container')) {
+        setShowFilters(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [openMenuId, showFilters])
 
   const fetchData = async () => {
     try {
@@ -33,6 +62,8 @@ export default function ClientList({ organizationId, onClientSelect }) {
         .from('packages')
         .select('*')
         .eq('organization_id', organizationId)
+        .order('category', { ascending: true })
+        .order('name', { ascending: true })
 
       if (packagesError) throw packagesError
 
@@ -42,7 +73,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
         .select(`
           *,
           clients:client_id (id, name),
-          packages:package_id (id, name)
+          packages:package_id (id, name, category)
         `)
         .eq('clients.organization_id', organizationId)
 
@@ -61,48 +92,284 @@ export default function ClientList({ organizationId, onClientSelect }) {
   // Get client packages and status
   const getClientInfo = (clientId) => {
     const clientCPs = clientPackages.filter(cp => cp.client_id === clientId)
-    if (clientCPs.length === 0) return { packages: [], status: 'No Package', expiryDate: null }
+    if (clientCPs.length === 0) return {
+      packages: 'No Package',
+      packageName: 'No Package',
+      packageType: '-',
+      status: 'No Package',
+      expiryDate: null
+    }
 
     const activePackage = clientCPs.find(cp => cp.status === 'active') ||
-                         clientCPs.find(cp => cp.status === 'expiring_soon') ||
-                         clientCPs[0]
+                          clientCPs.find(cp => cp.status === 'expiring_soon') ||
+                          clientCPs[0]
 
-    const packageNames = clientCPs.map(cp => cp.packages?.name).filter(Boolean).join(', ')
+    // Group packages by category and show specific assigned durations
+    const categoryGroups = {}
+    clientCPs.forEach(cp => {
+      if (cp.packages?.category && cp.packages.category.includes(' - ')) {
+        // Package has category in "Category - Duration" format
+        const [category, duration] = cp.packages.category.split(' - ')
+        if (category && duration) {
+          if (!categoryGroups[category]) {
+            categoryGroups[category] = []
+          }
+          if (!categoryGroups[category].includes(duration)) {
+            categoryGroups[category].push(duration)
+          }
+        }
+      } else if (cp.packages?.duration_days) {
+        // Package doesn't have proper category, treat as uncategorized
+        const category = 'Uncategorized'
+        const duration = cp.packages.duration_days <= 31 ? 'Monthly' :
+                        cp.packages.duration_days <= 93 ? 'Quarterly' :
+                        cp.packages.duration_days <= 186 ? 'Half Yearly' : 'Yearly'
+
+        if (!categoryGroups[category]) {
+          categoryGroups[category] = []
+        }
+        if (!categoryGroups[category].includes(duration)) {
+          categoryGroups[category].push(duration)
+        }
+      }
+    })
+
+    // Get primary package info for separate columns
+    let category = 'No Package'
+    let planName = '-'
+
+    if (clientCPs.length > 0) {
+      const activePackage = clientCPs.find(cp => cp.status === 'active') ||
+                           clientCPs.find(cp => cp.status === 'expiring_soon') ||
+                           clientCPs[0]
+
+      if (activePackage?.packages?.category) {
+        if (activePackage.packages.category.includes(' - ')) {
+          // Parse category from "Category - Type" format
+          const [pkgCategory, pkgType] = activePackage.packages.category.split(' - ')
+          category = pkgCategory
+          planName = activePackage.packages.name || pkgType
+        } else {
+          // Use category as is
+          category = activePackage.packages.category
+          planName = activePackage.packages.name
+        }
+      } else if (activePackage?.packages?.name) {
+        // Fallback: use package name if no category
+        category = 'Uncategorized'
+        planName = activePackage.packages.name
+      }
+    }
+
+    // Format display for combined packages column (for mobile)
+    let formattedPackages = ''
+    if (Object.keys(categoryGroups).length > 0) {
+      formattedPackages = Object.entries(categoryGroups).map(([category, durations]) => {
+        return `${category}\n${durations.join(', ')}`
+      }).join('\n\n')
+    } else {
+      // Fallback: show package names if no categories
+      formattedPackages = clientCPs.map(cp => cp.packages?.name).filter(Boolean).join(', ')
+    }
+
     return {
-      packages: packageNames,
+      packages: formattedPackages || 'No Package',
+      packageName: category,
+      packageType: planName,
       status: activePackage.status,
       expiryDate: activePackage.end_date
     }
   }
 
+  // Get unique package categories
+  const getPackageCategories = () => {
+    const categories = new Set()
+    packages.forEach(pkg => {
+      if (pkg.category) {
+        if (pkg.category.includes(' - ')) {
+          const [category] = pkg.category.split(' - ')
+          categories.add(category.trim())
+        } else {
+          categories.add(pkg.category.trim())
+        }
+      }
+    })
+    return Array.from(categories).sort()
+  }
+
+  // Get package types for selected category
+  const getPackageTypesForCategory = (category) => {
+    if (!category) return []
+    const types = new Set()
+    packages.forEach(pkg => {
+      if (pkg.category) {
+        if (pkg.category.includes(' - ')) {
+          const [pkgCategory, pkgType] = pkg.category.split(' - ')
+          if (pkgCategory.trim() === category) {
+            types.add(pkgType.trim())
+          }
+        } else if (pkg.category.trim() === category) {
+          // For packages without " - " format, use duration-based type
+          const duration = pkg.duration_days
+          const type = duration <= 31 ? 'Monthly' :
+                      duration <= 93 ? 'Quarterly' :
+                      duration <= 186 ? 'Half Yearly' : 'Yearly'
+          types.add(type)
+        }
+      }
+    })
+    return Array.from(types).sort()
+  }
+
+  // Calculate age from date of birth
+  const calculateAge = (dateOfBirth) => {
+    if (!dateOfBirth) return null
+    const birthDate = new Date(dateOfBirth)
+    const today = new Date()
+    let age = today.getFullYear() - birthDate.getFullYear()
+    const monthDiff = today.getMonth() - birthDate.getMonth()
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--
+    }
+    return age
+  }
+
+  // Get age group
+  const getAgeGroup = (age) => {
+    if (age === null) return null
+    if (age >= 18 && age <= 25) return '18–25'
+    if (age >= 26 && age <= 35) return '26–35'
+    if (age >= 36 && age <= 45) return '36–45'
+    return '46+'
+  }
+
+  // Check if client joined recently (last 1-7 days)
+  const isRecentlyJoined = (createdAt) => {
+    if (!createdAt) return false
+    const joinDate = new Date(createdAt)
+    const now = new Date()
+    const diffTime = Math.abs(now - joinDate)
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+    return diffDays >= 1 && diffDays <= 7
+  }
+
+  // Clear all filters
+  const clearAllFilters = () => {
+    setPackageCategory('')
+    setPackageType('')
+    setClientStatuses([])
+    setJoinStatus('')
+    setGender('')
+    setAgeGroup('')
+  }
+
   const filteredClients = clients.filter(client => {
+    // Search filter
     const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         client.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         client.phone?.includes(searchTerm)
+                          client.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          client.phone?.includes(searchTerm)
 
     if (!matchesSearch) return false
 
-    if (statusFilter === 'all') return true
-
     const clientInfo = getClientInfo(client.id)
-    if (statusFilter === 'no_package') return clientInfo.status === 'No Package'
-    return clientInfo.status === statusFilter
+
+    // Package Category filter
+    if (packageCategory) {
+      if (clientInfo.packageName !== packageCategory) return false
+    }
+
+    // Package Type filter
+    if (packageType) {
+      // If a category is selected, only check packages within that category
+      const relevantPackages = packageCategory
+        ? clientPackages.filter(cp => {
+            if (cp.packages?.category?.includes(' - ')) {
+              const [cat] = cp.packages.category.split(' - ')
+              return cat?.trim() === packageCategory
+            } else {
+              return cp.packages?.category?.trim() === packageCategory
+            }
+          })
+        : clientPackages.filter(cp => cp.client_id === client.id)
+
+      const clientPackageTypes = relevantPackages
+        .map(cp => {
+          if (cp.packages?.category?.includes(' - ')) {
+            const [, type] = cp.packages.category.split(' - ')
+            return type?.trim()
+          } else {
+            const duration = cp.packages?.duration_days
+            return duration <= 31 ? 'Monthly' :
+                   duration <= 93 ? 'Quarterly' :
+                   duration <= 186 ? 'Half Yearly' : 'Yearly'
+          }
+        })
+        .filter(Boolean)
+
+      if (!clientPackageTypes.includes(packageType)) return false
+    }
+
+    // Client Status filter (multi-select)
+    if (clientStatuses.length > 0) {
+      const currentStatus = clientInfo.status === 'No Package' ? 'no_package' : clientInfo.status
+      if (!clientStatuses.includes(currentStatus)) return false
+    }
+
+    // Join Status filter
+    if (joinStatus === 'recently_joined') {
+      if (!isRecentlyJoined(client.created_at)) return false
+    }
+
+    // Gender filter
+    if (gender) {
+      if (client.gender !== gender) return false
+    }
+
+    // Age Group filter
+    if (ageGroup) {
+      const age = calculateAge(client.date_of_birth)
+      const clientAgeGroup = getAgeGroup(age)
+      if (clientAgeGroup !== ageGroup) return false
+    }
+
+    return true
   })
 
-  const handleDelete = async (clientId) => {
-    if (!confirm('Are you sure you want to delete this client?')) return
+  const handleDelete = (client) => {
+    setClientToDelete(client)
+    setShowDeleteDialog(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!clientToDelete) return
 
     try {
       const { error } = await supabase
         .from('clients')
         .delete()
-        .eq('id', clientId)
+        .eq('id', clientToDelete.id)
 
       if (error) throw error
       fetchData()
+      setShowDeleteDialog(false)
+      setClientToDelete(null)
     } catch (error) {
       console.error('Error deleting client:', error)
       alert('Error deleting client')
+    }
+  }
+
+  const cancelDelete = () => {
+    setShowDeleteDialog(false)
+    setClientToDelete(null)
+  }
+
+  const handleExport = () => {
+    try {
+      exportClientsToExcel(filteredClients)
+    } catch (error) {
+      console.error('Error exporting clients:', error)
+      alert('Error exporting data')
     }
   }
 
@@ -119,15 +386,26 @@ export default function ClientList({ organizationId, onClientSelect }) {
       {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
-        <button
-          onClick={() => setShowForm(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
-        >
-          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Add Client
-        </button>
+        <div className="flex space-x-3">
+          <button
+            onClick={handleExport}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export Data
+          </button>
+          <button
+            onClick={() => setShowForm(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Client
+          </button>
+        </div>
       </div>
 
       {/* Search and Filters */}
@@ -142,26 +420,158 @@ export default function ClientList({ organizationId, onClientSelect }) {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div className="flex gap-2">
-            {[
-              { value: 'all', label: 'All' },
-              { value: 'active', label: 'Active' },
-              { value: 'expiring_soon', label: 'Expiring Soon' },
-              { value: 'expired', label: 'Expired' },
-              { value: 'no_package', label: 'No Package' }
-            ].map((filter) => (
-              <button
-                key={filter.value}
-                onClick={() => setStatusFilter(filter.value)}
-                className={`px-3 py-2 rounded-md text-sm font-medium ${
-                  statusFilter === filter.value
-                    ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {filter.label}
-              </button>
-            ))}
+          <div className="flex gap-2 relative filters-container">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 ${
+                showFilters
+                  ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              Filters
+              {(packageCategory || packageType || clientStatuses.length > 0 || joinStatus || gender || ageGroup) && (
+                <span className="bg-blue-500 text-white text-xs rounded-full px-1 min-w-[18px] h-[18px] flex items-center justify-center">
+                  {[packageCategory, packageType, ...clientStatuses, joinStatus, gender, ageGroup].filter(Boolean).length}
+                </span>
+              )}
+            </button>
+
+            {/* Advanced Filters Panel */}
+            {showFilters && (
+              <div className="absolute top-full right-0 mt-2 w-96 bg-white rounded-lg shadow-lg border border-gray-200 z-50 p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Package Category */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Package Category</label>
+                    <select
+                      value={packageCategory}
+                      onChange={(e) => {
+                        setPackageCategory(e.target.value)
+                        setPackageType('') // Reset package type when category changes
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">All Categories</option>
+                      {getPackageCategories().map(category => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Package Type */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Package Type</label>
+                    <select
+                      value={packageType}
+                      onChange={(e) => setPackageType(e.target.value)}
+                      disabled={!packageCategory}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    >
+                      <option value="">{packageCategory ? 'All Types' : 'Select category first'}</option>
+                      {packageCategory && getPackageTypesForCategory(packageCategory).map(type => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Client Status (Multi-select) */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Client Status</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: 'active', label: 'Active' },
+                        { value: 'expiring_soon', label: 'Expiring Soon' },
+                        { value: 'expired', label: 'Expired' },
+                        { value: 'no_package', label: 'No Package' }
+                      ].map(status => (
+                        <label key={status.value} className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={clientStatuses.includes(status.value)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setClientStatuses([...clientStatuses, status.value])
+                              } else {
+                                setClientStatuses(clientStatuses.filter(s => s !== status.value))
+                              }
+                            }}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">{status.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Join Status */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Join Status</label>
+                    <select
+                      value={joinStatus}
+                      onChange={(e) => setJoinStatus(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">All</option>
+                      <option value="recently_joined">Recently Joined (1-7 days)</option>
+                    </select>
+                  </div>
+
+                  {/* Gender */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: 'male', label: 'Male' },
+                        { value: 'female', label: 'Female' },
+                        { value: 'other', label: 'Other' }
+                      ].map(genderOption => (
+                        <label key={genderOption.value} className="flex items-center">
+                          <input
+                            type="radio"
+                            name="gender"
+                            value={genderOption.value}
+                            checked={gender === genderOption.value}
+                            onChange={(e) => setGender(e.target.value)}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">{genderOption.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Age Group */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Age Group</label>
+                    <select
+                      value={ageGroup}
+                      onChange={(e) => setAgeGroup(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">All Ages</option>
+                      <option value="18–25">18–25</option>
+                      <option value="26–35">26–35</option>
+                      <option value="36–45">36–45</option>
+                      <option value="46+">46+</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Clear Filters Button */}
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={clearAllFilters}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+                  >
+                    Clear All Filters
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -178,7 +588,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
         <div className="block md:hidden">
           {filteredClients.length === 0 ? (
             <div className="px-4 py-8 text-center text-gray-500">
-              {searchTerm || statusFilter !== 'all' ? 'No clients found matching your criteria.' : 'No clients yet. Add your first client!'}
+              {searchTerm || packageCategory || packageType || clientStatuses.length > 0 || joinStatus || gender || ageGroup ? 'No clients found matching your criteria.' : 'No clients yet. Add your first client!'}
             </div>
           ) : (
             <div className="divide-y divide-gray-200">
@@ -197,6 +607,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
                         </div>
                         <div>
                           <div className="text-sm font-medium text-gray-900">{client.name}</div>
+                          <div className="text-sm text-gray-500">{client.client_id || 'No ID'}</div>
                           <div className="text-sm text-gray-500">{client.email}</div>
                         </div>
                       </div>
@@ -204,13 +615,30 @@ export default function ClientList({ organizationId, onClientSelect }) {
                         {getStatusLabel(clientInfo.status)}
                       </span>
                     </div>
-                    <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
+                    <div className="mt-3 flex items-start justify-between text-sm text-gray-600">
                       <span>{client.phone || 'No phone'}</span>
-                      <span>{clientInfo.packages || 'No Package'}</span>
+                      <div className="text-right text-xs">
+                        {clientInfo.packages === 'No Package' ? (
+                          <div className="text-gray-500">No Package</div>
+                        ) : (
+                          <div>
+                            {clientInfo.packages.split('\n\n').map((categoryBlock, index) => {
+                              const lines = categoryBlock.split('\n')
+                              const category = lines[0]
+                              const durations = lines.slice(1).join(', ')
+                              return (
+                                <div key={index} className="mb-1 last:mb-0">
+                                  <div className="font-medium text-gray-900">{category} {durations}</div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="mt-2 flex justify-end space-x-2">
                       <button
-                        onClick={() => onViewClient?.(client)}
+                        onClick={() => onClientSelect?.(client)}
                         className="text-blue-600 hover:text-blue-900 text-sm"
                       >
                         View
@@ -241,13 +669,19 @@ export default function ClientList({ organizationId, onClientSelect }) {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Client ID
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Name
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Phone
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Package(s)
+                  Category
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Plan Name
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
@@ -263,8 +697,8 @@ export default function ClientList({ organizationId, onClientSelect }) {
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredClients.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-4 text-center text-gray-500">
-                    {searchTerm || statusFilter !== 'all' ? 'No clients found matching your criteria.' : 'No clients yet. Add your first client!'}
+                  <td colSpan="8" className="px-6 py-4 text-center text-gray-500">
+                    {searchTerm || packageCategory || packageType || clientStatuses.length > 0 || joinStatus || gender || ageGroup ? 'No clients found matching your criteria.' : 'No clients yet. Add your first client!'}
                   </td>
                 </tr>
               ) : (
@@ -272,6 +706,9 @@ export default function ClientList({ organizationId, onClientSelect }) {
                   const clientInfo = getClientInfo(client.id)
                   return (
                     <tr key={client.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {client.client_id || 'N/A'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="flex-shrink-0 h-10 w-10">
@@ -291,7 +728,10 @@ export default function ClientList({ organizationId, onClientSelect }) {
                         {client.phone || '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {clientInfo.packages || 'No Package'}
+                        {clientInfo.packageName}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {clientInfo.packageType}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(clientInfo.status)}`}>
@@ -301,25 +741,48 @@ export default function ClientList({ organizationId, onClientSelect }) {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {clientInfo.expiryDate ? new Date(clientInfo.expiryDate).toLocaleDateString() : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium relative menu-container">
                         <button
-                          onClick={() => onViewClient?.(client)}
-                          className="text-blue-600 hover:text-blue-900 mr-4"
+                          onClick={() => setOpenMenuId(openMenuId === client.id ? null : client.id)}
+                          className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100"
                         >
-                          View
+                          <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                          </svg>
                         </button>
-                        <button
-                          onClick={() => setShowForm(client)}
-                          className="text-blue-600 hover:text-blue-900 mr-4"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(client.id)}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Delete
-                        </button>
+                        {openMenuId === client.id && (
+                          <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border border-gray-200">
+                            <div className="py-1">
+                              <button
+                                onClick={() => {
+                                  onClientSelect?.(client)
+                                  setOpenMenuId(null)
+                                }}
+                                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                              >
+                                View Details
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowForm(client)
+                                  setOpenMenuId(null)
+                                }}
+                                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleDelete(client.id)
+                                  setOpenMenuId(null)
+                                }}
+                                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )
@@ -342,345 +805,14 @@ export default function ClientList({ organizationId, onClientSelect }) {
           }}
         />
       )}
-    </div>
-  )
-}
 
-function ClientForm({ client, organizationId, packages, onClose, onSave }) {
-  const [formData, setFormData] = useState({
-    firstName: client?.firstName || '',
-    lastName: client?.lastName || '',
-    age: client?.age || '',
-    gender: client?.gender || '',
-    mobileNumber: client?.mobileNumber || '',
-    email: client?.email || '',
-    address: client?.address || '',
-    emergencyContactName: client?.emergencyContactName || '',
-    emergencyNumber: client?.emergencyNumber || '',
-    packageAssigned: client?.packageAssigned || '',
-    personalTrainer: client?.personalTrainer || false,
-    startDate: new Date().toISOString().split('T')[0]
-  })
-  const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState({})
-
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: '' }))
-    }
-  }
-
-  const validateForm = () => {
-    const newErrors = {}
-
-    // Personal Information
-    if (!formData.firstName.trim()) newErrors.firstName = 'First name is required'
-    if (!formData.lastName.trim()) newErrors.lastName = 'Last name is required'
-    if (!formData.age) newErrors.age = 'Age is required'
-    else if (formData.age < 10 || formData.age > 80) newErrors.age = 'Age must be between 10 and 80'
-    if (!formData.gender) newErrors.gender = 'Gender is required'
-
-    // Contact Information
-    if (!formData.mobileNumber) newErrors.mobileNumber = 'Mobile number is required'
-    else if (!/^\d{10}$/.test(formData.mobileNumber)) newErrors.mobileNumber = 'Mobile number must be 10 digits'
-    if (!formData.address.trim()) newErrors.address = 'Address is required'
-
-    // Emergency Contact
-    if (!formData.emergencyContactName.trim()) newErrors.emergencyContactName = 'Emergency contact name is required'
-    if (!formData.emergencyNumber) newErrors.emergencyNumber = 'Emergency number is required'
-    else if (!/^\d{10}$/.test(formData.emergencyNumber)) newErrors.emergencyNumber = 'Emergency number must be 10 digits'
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-
-    if (!validateForm()) return
-
-    setLoading(true)
-
-    try {
-      const fullName = `${formData.firstName.trim()} ${formData.lastName.trim()}`
-
-      if (client) {
-        // Update client - for now, just update basic fields
-        const { error } = await supabase
-          .from('clients')
-          .update({
-            name: fullName,
-            email: formData.email,
-            phone: formData.mobileNumber,
-            address: formData.address
-          })
-          .eq('id', client.id)
-
-        if (error) throw error
-      } else {
-        // Create client
-        const { data: newClient, error: clientError } = await supabase
-          .from('clients')
-          .insert([{
-            name: fullName,
-            email: formData.email,
-            phone: formData.mobileNumber,
-            address: formData.address,
-            organization_id: organizationId
-          }])
-          .select()
-          .single()
-
-        if (clientError) throw clientError
-
-        // Assign package if selected
-        if (formData.packageAssigned && newClient) {
-          const selectedPackage = packages.find(p => p.id === formData.packageAssigned)
-          if (selectedPackage) {
-            const startDate = new Date(formData.startDate)
-            const endDate = new Date(startDate)
-            endDate.setDate(startDate.getDate() + selectedPackage.duration_days)
-
-            const { error: packageError } = await supabase
-              .from('client_packages')
-              .insert([{
-                client_id: newClient.id,
-                package_id: formData.packageAssigned,
-                start_date: formData.startDate,
-                end_date: endDate.toISOString().split('T')[0]
-              }])
-
-            if (packageError) throw packageError
-          }
-        }
-      }
-
-      onSave()
-    } catch (error) {
-      console.error('Error saving client:', error)
-      alert('Error saving client')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Overlay */}
-      <div className="absolute inset-0 bg-secondary-900 bg-opacity-50 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Modal */}
-      <div className="relative bg-bg-card rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-border-light">
-          <h2 className="text-xl font-semibold text-text-primary">Add New Client</h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-secondary-100 transition-colors"
-          >
-            <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Personal Information */}
-          <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Personal Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="form-label">First Name *</label>
-                <input
-                  type="text"
-                  className={`form-input ${errors.firstName ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.firstName}
-                  onChange={(e) => handleInputChange('firstName', e.target.value)}
-                  placeholder="Enter first name"
-                />
-                {errors.firstName && <p className="mt-1 text-sm text-danger-600">{errors.firstName}</p>}
-              </div>
-              <div>
-                <label className="form-label">Last Name *</label>
-                <input
-                  type="text"
-                  className={`form-input ${errors.lastName ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.lastName}
-                  onChange={(e) => handleInputChange('lastName', e.target.value)}
-                  placeholder="Enter last name"
-                />
-                {errors.lastName && <p className="mt-1 text-sm text-danger-600">{errors.lastName}</p>}
-              </div>
-              <div>
-                <label className="form-label">Age *</label>
-                <input
-                  type="number"
-                  min="10"
-                  max="80"
-                  className={`form-input ${errors.age ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.age}
-                  onChange={(e) => handleInputChange('age', e.target.value)}
-                  placeholder="Enter age (10-80)"
-                />
-                {errors.age && <p className="mt-1 text-sm text-danger-600">{errors.age}</p>}
-              </div>
-              <div>
-                <label className="form-label">Gender *</label>
-                <select
-                  className={`form-input ${errors.gender ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.gender}
-                  onChange={(e) => handleInputChange('gender', e.target.value)}
-                >
-                  <option value="">Select gender</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                  <option value="other">Other</option>
-                </select>
-                {errors.gender && <p className="mt-1 text-sm text-danger-600">{errors.gender}</p>}
-              </div>
-            </div>
-          </div>
-
-          {/* Contact Information */}
-          <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Contact Information</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="form-label">Mobile Number *</label>
-                <input
-                  type="tel"
-                  className={`form-input ${errors.mobileNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.mobileNumber}
-                  onChange={(e) => handleInputChange('mobileNumber', e.target.value)}
-                  placeholder="Enter 10-digit mobile number"
-                  maxLength="10"
-                />
-                {errors.mobileNumber && <p className="mt-1 text-sm text-danger-600">{errors.mobileNumber}</p>}
-              </div>
-              <div>
-                <label className="form-label">Email ID</label>
-                <input
-                  type="email"
-                  className="form-input"
-                  value={formData.email}
-                  onChange={(e) => handleInputChange('email', e.target.value)}
-                  placeholder="Enter email address"
-                />
-              </div>
-              <div>
-                <label className="form-label">Address *</label>
-                <textarea
-                  rows="3"
-                  className={`form-input ${errors.address ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.address}
-                  onChange={(e) => handleInputChange('address', e.target.value)}
-                  placeholder="Enter full address"
-                />
-                {errors.address && <p className="mt-1 text-sm text-danger-600">{errors.address}</p>}
-              </div>
-            </div>
-          </div>
-
-          {/* Emergency Contact */}
-          <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Emergency Contact</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="form-label">Emergency Contact Name *</label>
-                <input
-                  type="text"
-                  className={`form-input ${errors.emergencyContactName ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.emergencyContactName}
-                  onChange={(e) => handleInputChange('emergencyContactName', e.target.value)}
-                  placeholder="Enter emergency contact name"
-                />
-                {errors.emergencyContactName && <p className="mt-1 text-sm text-danger-600">{errors.emergencyContactName}</p>}
-              </div>
-              <div>
-                <label className="form-label">Emergency Number *</label>
-                <input
-                  type="tel"
-                  className={`form-input ${errors.emergencyNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
-                  value={formData.emergencyNumber}
-                  onChange={(e) => handleInputChange('emergencyNumber', e.target.value)}
-                  placeholder="Enter 10-digit emergency number"
-                  maxLength="10"
-                />
-                {errors.emergencyNumber && <p className="mt-1 text-sm text-danger-600">{errors.emergencyNumber}</p>}
-              </div>
-            </div>
-          </div>
-
-          {/* Package Assignment */}
-          <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Package Assignment</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="form-label">Package Assigned</label>
-                <select
-                  className="form-input"
-                  value={formData.packageAssigned}
-                  onChange={(e) => handleInputChange('packageAssigned', e.target.value)}
-                >
-                  <option value="">Select a package</option>
-                  {packages && packages.map((pkg) => (
-                    <option key={pkg.id} value={pkg.id}>
-                      {pkg.name} - ${pkg.price} ({pkg.duration_days} days)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {formData.packageAssigned && (
-                <div>
-                  <label className="form-label">Start Date</label>
-                  <input
-                    type="date"
-                    className="form-input"
-                    value={formData.startDate}
-                    onChange={(e) => handleInputChange('startDate', e.target.value)}
-                  />
-                </div>
-              )}
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="personalTrainer"
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-border-light rounded"
-                  checked={formData.personalTrainer}
-                  onChange={(e) => handleInputChange('personalTrainer', e.target.checked)}
-                />
-                <label htmlFor="personalTrainer" className="ml-2 text-sm text-text-primary">
-                  Would you like to take a Personal Trainer?
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Form Actions */}
-          <div className="flex justify-end space-x-3 pt-6 border-t border-border-light">
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn-secondary"
-              disabled={loading}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary"
-            >
-              {loading ? 'Adding Client...' : 'Add Client'}
-            </button>
-          </div>
-        </form>
-      </div>
+      <ConfirmationDialog
+        isOpen={showDeleteDialog}
+        title="Delete Client"
+        message={`Are you sure you want to delete "${clientToDelete?.name}"? This action cannot be undone.`}
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </div>
   )
 }

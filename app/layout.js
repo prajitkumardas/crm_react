@@ -1,5 +1,4 @@
 import './globals.css'
-import ServiceWorkerRegister from '../components/ServiceWorkerRegister'
 
 export const metadata = {
   title: 'Smart Client Manager',
@@ -37,7 +36,6 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body>
         {children}
-        <ServiceWorkerRegister />
       </body>
     </html>
   )

@@ -216,7 +216,7 @@ export default function Analytics({ organizationId }) {
                   Total Revenue
                 </dt>
                 <dd className="text-2xl font-semibold text-text-primary">
-                  ${analyticsData.clientPackages.reduce((sum, cp) => sum + (cp.packages?.price || 0), 0).toFixed(2)}
+                  ₹{analyticsData.clientPackages.reduce((sum, cp) => sum + (cp.packages?.price || 0), 0).toFixed(2)}
                 </dd>
               </div>
             </div>
@@ -326,7 +326,7 @@ export default function Analytics({ organizationId }) {
                     border: '1px solid #E5E7EB',
                     borderRadius: '8px'
                   }}
-                  formatter={(value) => [`$${value}`, 'Revenue']}
+                  formatter={(value) => [`₹${value}`, 'Revenue']}
                 />
                 <Bar dataKey="revenue" fill="#10B981" radius={[4, 4, 0, 0]} />
               </BarChart>

@@ -119,6 +119,7 @@ export default function Home() {
     }
   };
 
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
   };
@@ -127,11 +128,6 @@ export default function Home() {
     setSelectedClient(client);
   };
 
-  const handleEditClient = (client) => {
-    // This would open the edit form - for now just close profile and show form
-    setSelectedClient(null);
-    // Could trigger the ClientList edit functionality here
-  };
 
   const handleCloseClientProfile = () => {
     setSelectedClient(null);
@@ -222,12 +218,11 @@ export default function Home() {
         <ClientProfile
           clientId={selectedClient.id}
           organizationId={profile.organization_id}
-          onBack={handleCloseClientProfile}
-          onEdit={handleEditClient}
+          onClose={handleCloseClientProfile}
         />
       )}
 
-      {activeTab === "packages" && (
+      {activeTab === "plans" && (
         <div className="p-6">
           <PackageList organizationId={profile.organization_id} />
         </div>

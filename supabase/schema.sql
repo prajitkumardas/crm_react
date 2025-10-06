@@ -8,6 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE organizations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name VARCHAR(255) NOT NULL,
+  description TEXT,
   owner_id UUID, -- Will reference profiles(id) after profiles table is created
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -30,11 +31,13 @@ ALTER TABLE organizations ADD CONSTRAINT fk_organizations_owner
 -- Clients table
 CREATE TABLE clients (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  client_id VARCHAR(20) UNIQUE NOT NULL, -- Human-readable unique ID like CLI-001
   organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(20),
   address TEXT,
+  date_of_birth DATE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -43,6 +46,7 @@ CREATE TABLE clients (
 CREATE TABLE packages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  category VARCHAR(255) NOT NULL,
   name VARCHAR(255) NOT NULL,
   description TEXT,
   duration_days INTEGER NOT NULL,
