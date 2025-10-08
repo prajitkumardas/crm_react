@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { useState, useEffect } from 'react'
+import { supabase, supabaseWithRetry } from '../lib/supabase'
 
 export default function ClientForm({ client, organizationId, packages, onClose, onSave }) {
   // Function to calculate age from date of birth
@@ -32,6 +32,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
         gender: client.gender || '',
         dateOfBirth: client.date_of_birth || '',
         mobileNumber: client.phone || '',
+        whatsappNumber: client.whatsapp_number || '',
         email: client.email || '',
         address: client.address || '',
         emergencyContactName: client.emergency_contact_name || '',
@@ -48,6 +49,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
         gender: '',
         dateOfBirth: '',
         mobileNumber: '',
+        whatsappNumber: '',
         email: '',
         address: '',
         emergencyContactName: '',
@@ -61,6 +63,64 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
   })
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
+
+  // Fetch client's package information when editing
+  useEffect(() => {
+    if (client) {
+      const fetchClientPackage = async () => {
+        try {
+          const result = await supabaseWithRetry(() =>
+            supabase
+              .from('client_packages')
+              .select(`
+                *,
+                packages:package_id (id, name, category)
+              `)
+              .eq('client_id', client.id)
+              .eq('status', 'active')
+              .single()
+          );
+
+          if (result.error && result.error.code !== 'PGRST116') { // PGRST116 is "not found"
+            console.error('Error fetching client package:', result.error);
+            return;
+          }
+
+          if (result.data && result.data.packages) {
+            const pkg = result.data.packages;
+            let category = '';
+            let planName = '';
+
+            if (pkg.category && pkg.category.includes(' - ')) {
+              // Parse "Category - Type" format
+              const [cat, type] = pkg.category.split(' - ');
+              category = cat.trim();
+              planName = pkg.name || type.trim();
+            } else if (pkg.category) {
+              // Use category as-is
+              category = pkg.category.trim();
+              planName = pkg.name || '';
+            } else {
+              // Fallback
+              category = 'Uncategorized';
+              planName = pkg.name || '';
+            }
+
+            setFormData(prev => ({
+              ...prev,
+              category,
+              planName,
+              startDate: result.data.start_date || prev.startDate
+            }));
+          }
+        } catch (error) {
+          console.error('Error fetching client package:', error);
+        }
+      };
+
+      fetchClientPackage();
+    }
+  }, [client]);
 
   // Parse packages to get categories and plan names from existing packages
   const packageOptions = packages?.reduce((acc, pkg) => {
@@ -131,6 +191,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
     // Contact Information
     if (!formData.mobileNumber) newErrors.mobileNumber = 'Mobile number is required'
     else if (!/^\d{10}$/.test(formData.mobileNumber)) newErrors.mobileNumber = 'Mobile number must be 10 digits'
+    if (formData.whatsappNumber && !/^\d{10}$/.test(formData.whatsappNumber)) newErrors.whatsappNumber = 'WhatsApp number must be 10 digits'
     if (!formData.address.trim()) newErrors.address = 'Address is required'
 
     // Emergency Contact
@@ -166,6 +227,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
             name: fullName,
             email: formData.email,
             phone: formData.mobileNumber,
+            whatsapp_number: formData.whatsappNumber,
             address: formData.address,
             date_of_birth: formData.dateOfBirth,
             gender: formData.gender,
@@ -183,6 +245,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
             name: fullName,
             email: formData.email,
             phone: formData.mobileNumber,
+            whatsapp_number: formData.whatsappNumber,
             address: formData.address,
             date_of_birth: formData.dateOfBirth,
             gender: formData.gender,
@@ -324,6 +387,19 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                   maxLength="10"
                 />
                 {errors.mobileNumber && <p className="mt-1 text-sm text-danger-600">{errors.mobileNumber}</p>}
+              </div>
+              <div>
+                <label className="form-label">WhatsApp Number</label>
+                <input
+                  type="tel"
+                  className={`form-input ${errors.whatsappNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  value={formData.whatsappNumber}
+                  onChange={(e) => handleInputChange('whatsappNumber', e.target.value)}
+                  placeholder="Enter 10-digit WhatsApp number"
+                  maxLength="10"
+                />
+                {errors.whatsappNumber && <p className="mt-1 text-sm text-danger-600">{errors.whatsappNumber}</p>}
+                <p className="mt-1 text-xs text-gray-500">Leave empty if same as mobile number</p>
               </div>
               <div>
                 <label className="form-label">Email ID</label>

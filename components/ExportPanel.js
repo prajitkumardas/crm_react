@@ -24,9 +24,33 @@ export default function ExportPanel({ organizationId, organization, dashboardSta
         case 'clients-excel':
           const { data: clients } = await supabase
             .from('clients')
-            .select('*')
+            .select(`
+              *,
+              client_id,
+              name,
+              gender,
+              date_of_birth,
+              phone,
+              whatsapp_number,
+              email,
+              address,
+              emergency_contact_name,
+              emergency_contact_phone,
+              created_at
+            `)
             .eq('organization_id', organizationId)
-          exportClientsToExcel(clients || [])
+
+          // Fetch client packages for package information
+          const { data: clientsPackages } = await supabase
+            .from('client_packages')
+            .select(`
+              *,
+              clients:client_id (id, name),
+              packages:package_id (id, name, category)
+            `)
+            .eq('clients.organization_id', organizationId)
+
+          exportClientsToExcel(clients || [], clientsPackages || [])
           break
 
         case 'packages-excel':
@@ -52,7 +76,20 @@ export default function ExportPanel({ organizationId, organization, dashboardSta
         case 'clients-csv':
           const { data: clientsCsv } = await supabase
             .from('clients')
-            .select('*')
+            .select(`
+              *,
+              client_id,
+              name,
+              gender,
+              date_of_birth,
+              phone,
+              whatsapp_number,
+              email,
+              address,
+              emergency_contact_name,
+              emergency_contact_phone,
+              created_at
+            `)
             .eq('organization_id', organizationId)
           exportClientsToCSV(clientsCsv || [])
           break
@@ -245,7 +282,9 @@ export default function ExportPanel({ organizationId, organization, dashboardSta
           <div>
             <h4 className="text-sm font-medium text-gray-700 mb-2">Data Included</h4>
             <ul className="text-sm text-gray-600 space-y-1">
-              <li>• Client personal information</li>
+              <li>• Complete client profile (name, gender, age, DOB)</li>
+              <li>• Contact details (phone, WhatsApp, email, address)</li>
+              <li>• Emergency contact information</li>
               <li>• Package assignments and status</li>
               <li>• Pricing and duration details</li>
               <li>• Organization summary statistics</li>

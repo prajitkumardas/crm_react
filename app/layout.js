@@ -1,4 +1,5 @@
 import './globals.css'
+import ErrorBoundary from '../components/ErrorBoundary'
 
 export const metadata = {
   title: 'Smart Client Manager',
@@ -35,7 +36,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        {children}
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
       </body>
     </html>
   )

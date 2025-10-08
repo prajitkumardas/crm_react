@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { LanguageProvider, useTranslation } from "../lib/languageContext";
+import notificationsService from "../lib/notificationsService";
 import {
   LayoutDashboard,
   Users,
@@ -19,6 +20,7 @@ import {
   Calendar,
   Filter,
   ChevronDown,
+  HelpCircle,
 } from "lucide-react";
 
 const navigation = [
@@ -45,15 +47,16 @@ const navigation = [
     icon: Settings,
     section: "secondary",
   },
-  { nameKey: "help", href: "help", icon: Settings, section: "secondary" },
+  { nameKey: "help", href: "help", icon: HelpCircle, section: "secondary" },
 ];
 
-export default function Layout({
+const Layout = memo(function Layout({
   children,
   profile,
   onSignOut,
   activeTab,
   onTabChange,
+  navigating = false,
 }) {
   return (
     <LanguageProvider>
@@ -63,25 +66,54 @@ export default function Layout({
         onSignOut={onSignOut}
         activeTab={activeTab}
         onTabChange={onTabChange}
+        navigating={navigating}
       />
     </LanguageProvider>
   );
-}
+});
 
-function LayoutContent({
+export default Layout;
+
+const LayoutContent = memo(function LayoutContent({
   children,
   profile,
   onSignOut,
   activeTab,
   onTabChange,
+  navigating = false,
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [notificationsDropdownOpen, setNotificationsDropdownOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationCount, setNotificationCount] = useState(0);
   const { t, language, changeLanguage } = useTranslation();
 
   const currentOrganization = profile?.organizations;
+
+  // Memoized fetchNotifications function
+  const fetchNotifications = useCallback(async () => {
+    if (!profile?.organization_id) return;
+
+    try {
+      const [notifs, count] = await Promise.all([
+        notificationsService.getNotifications(profile.organization_id),
+        notificationsService.getNotificationCount(profile.organization_id)
+      ]);
+      setNotifications(notifs);
+      setNotificationCount(count);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+    }
+  }, [profile?.organization_id]);
+
+  // Fetch notifications only when organization_id changes
+  useEffect(() => {
+    if (profile?.organization_id) {
+      fetchNotifications();
+    }
+  }, [profile?.organization_id, fetchNotifications]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -394,16 +426,23 @@ function LayoutContent({
                 {/* Notifications Button */}
                 <div className="relative notifications-dropdown">
                   <button
-                    onClick={() => setNotificationsDropdownOpen(!notificationsDropdownOpen)}
+                    onClick={() => {
+                      setNotificationsDropdownOpen(!notificationsDropdownOpen);
+                      if (!notificationsDropdownOpen) {
+                        fetchNotifications(); // Refresh notifications when opening
+                      }
+                    }}
                     className="flex items-center justify-center w-10 h-10 rounded-lg bg-secondary-100 text-secondary-600 hover:bg-secondary-200 hover:text-secondary-900 transition-all duration-200 relative"
                   >
                     <Bell className="h-5 w-5" />
                     {/* Notification Badge with Animation */}
-                    <span className="absolute -top-1 -right-1 h-5 w-5 bg-danger-500 rounded-full flex items-center justify-center animate-pulse border-2 border-bg-card">
-                      <span className="text-xs font-bold text-text-inverse">
-                        3
+                    {notificationCount > 0 && (
+                      <span className="absolute -top-1 -right-1 h-5 w-5 bg-danger-500 rounded-full flex items-center justify-center animate-pulse border-2 border-bg-card">
+                        <span className="text-xs font-bold text-text-inverse">
+                          {notificationCount > 99 ? '99+' : notificationCount}
+                        </span>
                       </span>
-                    </span>
+                    )}
                   </button>
 
                   {/* Notifications Dropdown */}
@@ -413,47 +452,57 @@ function LayoutContent({
                         <h3 className="text-sm font-medium text-text-primary">Notifications</h3>
                       </div>
                       <div className="max-h-64 overflow-y-auto">
-                        {/* Sample Notifications */}
-                        <div className="px-4 py-3 border-b border-border-light hover:bg-secondary-50 cursor-pointer">
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0">
-                              <div className="w-2 h-2 bg-danger-500 rounded-full mt-2"></div>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-text-primary font-medium">New client registered</p>
-                              <p className="text-xs text-text-secondary">John Doe joined your gym membership</p>
-                              <p className="text-xs text-text-secondary mt-1">2 minutes ago</p>
-                            </div>
+                        {notifications.length === 0 ? (
+                          <div className="px-4 py-8 text-center text-gray-500">
+                            <Bell className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                            <p className="text-sm">No notifications</p>
                           </div>
-                        </div>
-                        <div className="px-4 py-3 border-b border-border-light hover:bg-secondary-50 cursor-pointer">
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0">
-                              <div className="w-2 h-2 bg-warning-500 rounded-full mt-2"></div>
+                        ) : (
+                          notifications.map((notification) => (
+                            <div
+                              key={notification.id}
+                              className="px-4 py-3 border-b border-border-light hover:bg-secondary-50 cursor-pointer last:border-b-0"
+                              onClick={() => {
+                                if (notification.action_url) {
+                                  // Handle navigation based on the action_url
+                                  if (notification.action_url.startsWith('/clients/')) {
+                                    onTabChange('clients');
+                                  } else if (notification.action_url.includes('/settings')) {
+                                    onTabChange('settings');
+                                  }
+                                }
+                                setNotificationsDropdownOpen(false);
+                              }}
+                            >
+                              <div className="flex items-start space-x-3">
+                                <div className="flex-shrink-0">
+                                  <div className={`w-2 h-2 rounded-full mt-2 ${
+                                    notification.type === 'error' ? 'bg-danger-500' :
+                                    notification.type === 'warning' ? 'bg-warning-500' :
+                                    'bg-info-500'
+                                  }`}></div>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-text-primary font-medium">{notification.title}</p>
+                                  <p className="text-xs text-text-secondary">{notification.message}</p>
+                                  <p className="text-xs text-text-secondary mt-1">
+                                    {new Date(notification.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-text-primary font-medium">Package expiring soon</p>
-                              <p className="text-xs text-text-secondary">Sarah's premium package expires in 3 days</p>
-                              <p className="text-xs text-text-secondary mt-1">1 hour ago</p>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="px-4 py-3 hover:bg-secondary-50 cursor-pointer">
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0">
-                              <div className="w-2 h-2 bg-success-500 rounded-full mt-2"></div>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-text-primary font-medium">Payment received</p>
-                              <p className="text-xs text-text-secondary">Monthly subscription payment from Mike Johnson</p>
-                              <p className="text-xs text-text-secondary mt-1">3 hours ago</p>
-                            </div>
-                          </div>
-                        </div>
+                          ))
+                        )}
                       </div>
                       <div className="px-4 py-2 border-t border-border-light">
-                        <button className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-                          View all notifications
+                        <button
+                          onClick={() => {
+                            onTabChange('settings');
+                            setNotificationsDropdownOpen(false);
+                          }}
+                          className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                        >
+                          View WhatsApp logs
                         </button>
                       </div>
                     </div>
@@ -505,6 +554,16 @@ function LayoutContent({
             {children}
           </div>
         </main>
+
+        {/* Navigation Loading Overlay */}
+        {navigating && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+            <div className="bg-white rounded-lg shadow-xl p-6 text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Navigating...</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mobile Bottom Navigation */}
@@ -545,4 +604,4 @@ function LayoutContent({
       <div className="lg:hidden h-16"></div>
     </div>
   );
-}
+});

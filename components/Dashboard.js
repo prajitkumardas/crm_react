@@ -30,6 +30,21 @@ export default function Dashboard({ organizationId }) {
   const [loading, setLoading] = useState(true)
   const [showClientForm, setShowClientForm] = useState(false)
   const [packages, setPackages] = useState([])
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [dateRange, setDateRange] = useState(() => {
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(endDate.getDate() - 30) // Default to last 30 days
+    return {
+      start: startDate,
+      end: endDate
+    }
+  })
+  const [packageFilters, setPackageFilters] = useState({
+    category: ''
+  })
+  const [availableCategories, setAvailableCategories] = useState([])
+  const [availableTypes, setAvailableTypes] = useState([])
   const [dashboardData, setDashboardData] = useState({
     newJoined: { value: 0, growth: 0 },
     activeClients: { value: 0, growth: 0 },
@@ -45,73 +60,124 @@ export default function Dashboard({ organizationId }) {
   })
 
   useEffect(() => {
-    fetchDashboardData()
+    let mounted = true
+    let fetching = false
 
-    // Set up real-time subscriptions
+    // Reset loading state on mount
+    setLoading(true)
+
+    const fetchData = async () => {
+      if (fetching || !mounted) return
+      fetching = true
+      try {
+        await fetchDashboardData()
+      } finally {
+        if (mounted) {
+          fetching = false
+        }
+      }
+    }
+
+    fetchData()
+
+    // Set up real-time subscriptions with cleanup check
     const clientsSubscription = supabase
-      .channel('clients_changes')
+      .channel(`clients_changes_${organizationId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'clients',
         filter: `organization_id=eq.${organizationId}`
       }, () => {
-        fetchDashboardData()
+        if (mounted && !fetching) {
+          fetchData()
+        }
       })
       .subscribe()
 
     const packagesSubscription = supabase
-      .channel('packages_changes')
+      .channel(`packages_changes_${organizationId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'packages',
         filter: `organization_id=eq.${organizationId}`
       }, () => {
-        fetchDashboardData()
+        if (mounted && !fetching) {
+          fetchData()
+        }
       })
       .subscribe()
 
     const clientPackagesSubscription = supabase
-      .channel('client_packages_changes')
+      .channel(`client_packages_changes_${organizationId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'client_packages'
       }, () => {
-        fetchDashboardData()
+        if (mounted && !fetching) {
+          fetchData()
+        }
       })
       .subscribe()
 
     const checkinsSubscription = supabase
-      .channel('checkins_changes')
+      .channel(`checkins_changes_${organizationId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'checkins'
       }, () => {
-        fetchDashboardData()
+        if (mounted && !fetching) {
+          fetchData()
+        }
       })
       .subscribe()
 
-    // Cleanup subscriptions
+    // Cleanup function
     return () => {
+      mounted = false
       clientsSubscription.unsubscribe()
       packagesSubscription.unsubscribe()
       clientPackagesSubscription.unsubscribe()
       checkinsSubscription.unsubscribe()
     }
-  }, [organizationId])
+  }, [organizationId, dateRange, packageFilters])
+
+  // Reset loading state when component becomes visible again
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && loading) {
+        // Component became visible again, reset loading if stuck
+        setLoading(true)
+        fetchData()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [loading])
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch clients
+      // Fetch clients within date range
       const { data: clients, error: clientsError } = await supabase
         .from('clients')
         .select('*')
         .eq('organization_id', organizationId)
+        .gte('created_at', dateRange.start.toISOString())
+        .lte('created_at', dateRange.end.toISOString())
 
       if (clientsError) throw clientsError
+
+      // Fetch all clients for total count (not filtered by date)
+      const { data: allClients, error: allClientsError } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('organization_id', organizationId)
+
+      if (allClientsError) throw allClientsError
 
       // Fetch packages for the client form
       const { data: packagesData, error: pkgError } = await supabase
@@ -124,30 +190,61 @@ export default function Dashboard({ organizationId }) {
       if (pkgError) throw pkgError
       setPackages(packagesData || [])
 
+      // Extract available categories and types from packages
+      const categories = new Set()
+      const types = new Set()
+
+      packagesData?.forEach(pkg => {
+        if (pkg.category) {
+          if (pkg.category.includes(' - ')) {
+            const [cat] = pkg.category.split(' - ')
+            categories.add(cat.trim())
+          } else {
+            categories.add(pkg.category.trim())
+          }
+        }
+
+        // Extract type from duration or category
+        if (pkg.category && pkg.category.includes(' - ')) {
+          const [, type] = pkg.category.split(' - ')
+          types.add(type.trim())
+        } else {
+          // Fallback to duration-based types
+          const duration = pkg.duration_days
+          if (duration <= 31) types.add('Monthly')
+          else if (duration <= 93) types.add('Quarterly')
+          else if (duration <= 186) types.add('Half-yearly')
+          else types.add('Annually')
+        }
+      })
+
+      setAvailableCategories(Array.from(categories).sort())
+      setAvailableTypes(Array.from(types).sort())
+
       // Fetch client packages with package details - filter by organization through client relationship
       const { data: clientPackages, error: packagesError } = await supabase
         .from('client_packages')
         .select(`
           *,
           clients!inner (id, name, email, organization_id),
-          packages:package_id (id, name, price, duration_days)
+          packages:package_id (id, name, price, duration_days, category)
         `)
         .eq('clients.organization_id', organizationId)
 
       if (packagesError) throw packagesError
 
-      // Fetch today's checkins - simplified query
-      const today = new Date().toISOString().split('T')[0]
+      // Fetch checkins within date range
       const { data: allCheckins, error: checkinsError } = await supabase
         .from('checkins')
         .select(`
           *,
           clients (id, name, organization_id)
         `)
-        .gte('check_in_time', today)
+        .gte('check_in_time', dateRange.start.toISOString().split('T')[0])
+        .lte('check_in_time', dateRange.end.toISOString().split('T')[0] + 'T23:59:59')
 
       // Filter checkins by organization in code
-      const todaysCheckins = (allCheckins?.filter(checkin =>
+      const filteredCheckins = (allCheckins?.filter(checkin =>
         checkin.clients?.organization_id === organizationId
       ) || []).map(checkin => ({
         id: checkin.id,
@@ -165,46 +262,67 @@ export default function Dashboard({ organizationId }) {
       }
 
       // Calculate metrics
-      const totalClients = clients?.length || 0
+      const totalClients = allClients?.length || 0
 
-      // New clients this month
-      const thisMonth = new Date()
-      thisMonth.setDate(1)
-      const newThisMonth = clients?.filter(client =>
-        new Date(client.created_at) >= thisMonth
-      ).length || 0
+      // New clients in selected date range
+      const newInRange = clients?.length || 0
 
-      // Last month for growth calculation
-      const lastMonth = new Date()
-      lastMonth.setMonth(lastMonth.getMonth() - 1)
-      lastMonth.setDate(1)
-      const lastMonthClients = clients?.filter(client =>
-        new Date(client.created_at) >= lastMonth && new Date(client.created_at) < thisMonth
-      ).length || 0
+      // Calculate growth by comparing with previous period of same length
+      const rangeDays = Math.ceil((dateRange.end - dateRange.start) / (1000 * 60 * 60 * 24))
+      const previousStart = new Date(dateRange.start)
+      previousStart.setDate(previousStart.getDate() - rangeDays)
+      const previousEnd = new Date(dateRange.start)
+      previousEnd.setDate(previousEnd.getDate() - 1)
 
-      const newJoinedGrowth = lastMonthClients > 0 ?
-        ((newThisMonth - lastMonthClients) / lastMonthClients * 100) : 0
+      const { data: previousClients } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .gte('created_at', previousStart.toISOString())
+        .lte('created_at', previousEnd.toISOString())
 
-      // Active clients (clients with active packages)
+      const previousPeriodCount = previousClients?.length || 0
+      const newJoinedGrowth = previousPeriodCount > 0 ?
+        ((newInRange - previousPeriodCount) / previousPeriodCount * 100) : 0
+
+      // Active clients (clients with active packages in the selected period)
       const activeClients = clientPackages?.filter(cp =>
         cp.status === 'active'
       ).length || 0
 
-      // Revenue calculation (sum of package prices for active packages)
+      // Revenue calculation (sum of package prices for active packages in the period)
       const revenue = clientPackages?.filter(cp =>
         cp.status === 'active'
       ).reduce((sum, cp) => sum + (cp.packages?.price || 0), 0) || 0
 
-      // Renewed (packages renewed this month)
-      const renewedThisMonth = clientPackages?.filter(cp =>
+      // Renewed (packages renewed in the selected period)
+      const renewedInPeriod = clientPackages?.filter(cp =>
         cp.status === 'active' &&
-        new Date(cp.updated_at).getMonth() === new Date().getMonth() &&
-        new Date(cp.updated_at).getFullYear() === new Date().getFullYear()
+        new Date(cp.updated_at) >= dateRange.start &&
+        new Date(cp.updated_at) <= dateRange.end
       ).length || 0
 
-      // Expired plans
+      // Calculate renewed growth by comparing with previous period
+      const { data: previousPackages } = await supabase
+        .from('client_packages')
+        .select(`
+          *,
+          clients!inner (id, name, email, organization_id)
+        `)
+        .eq('clients.organization_id', organizationId)
+        .gte('updated_at', previousStart.toISOString())
+        .lte('updated_at', previousEnd.toISOString())
+        .eq('status', 'active')
+
+      const previousRenewedCount = previousPackages?.length || 0
+      const renewedGrowth = previousRenewedCount > 0 ?
+        ((renewedInPeriod - previousRenewedCount) / previousRenewedCount * 100) : 0
+
+      // Expired plans in the selected period
       const expiredPlans = clientPackages?.filter(cp =>
-        cp.status === 'expired'
+        cp.status === 'expired' &&
+        new Date(cp.end_date) >= dateRange.start &&
+        new Date(cp.end_date) <= dateRange.end
       ).slice(0, 5).map(cp => ({
         id: cp.id,
         client: cp.clients?.name || 'Unknown',
@@ -212,7 +330,7 @@ export default function Dashboard({ organizationId }) {
         plan: cp.packages?.name || 'Unknown Plan'
       })) || []
 
-      // Recently joined clients
+      // Recently joined clients in the selected period
       const recentlyJoined = clients?.sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
       ).slice(0, 3).map(client => ({
@@ -228,29 +346,48 @@ export default function Dashboard({ organizationId }) {
         initials: client.name.split(' ').map(n => n[0]).join('').toUpperCase()
       })) || []
 
-      // Today's attendance
-      const todaysAttendance = todaysCheckins?.map(checkin => ({
-        id: checkin.id,
-        client: checkin.clients?.name || 'Unknown',
-        plan: checkin.client_packages?.packages?.name || 'Unknown',
-        time: new Date(checkin.check_in_time).toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        })
-      })) || []
+      // Attendance in the selected period
+      const todaysAttendance = filteredCheckins?.slice(0, 5) || []
 
-      // Package distribution
+      // Package distribution for packages in the selected period
       const packageStats = {}
       clientPackages?.forEach(cp => {
-        const duration = cp.packages?.duration_days
-        let category = 'Other'
-        if (duration <= 31) category = 'Monthly'
-        else if (duration <= 93) category = 'Quarterly'
-        else if (duration <= 186) category = 'Half-yearly'
-        else category = 'Annually'
+        if (!cp.packages) return
 
-        packageStats[category] = (packageStats[category] || 0) + 1
+        // Filter by date range - only include packages that started within the selected period
+        const packageStartDate = new Date(cp.start_date)
+        if (packageStartDate < dateRange.start || packageStartDate > dateRange.end) return
+
+        let packageCategory = ''
+        let packageType = ''
+
+        if (cp.packages.category && cp.packages.category.includes(' - ')) {
+          const [cat, type] = cp.packages.category.split(' - ')
+          packageCategory = cat.trim()
+          packageType = type.trim()
+        } else if (cp.packages.category) {
+          packageCategory = cp.packages.category.trim()
+          // Fallback to duration-based type
+          const duration = cp.packages.duration_days
+          if (duration <= 31) packageType = 'Monthly'
+          else if (duration <= 93) packageType = 'Quarterly'
+          else if (duration <= 186) packageType = 'Half-yearly'
+          else packageType = 'Annually'
+        }
+
+        // If a category is selected, show package types within that category
+        // If no category is selected, show distribution by categories
+        if (packageFilters.category) {
+          // Show package types for the selected category
+          if (packageCategory === packageFilters.category) {
+            const distributionKey = packageType || 'Other'
+            packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
+          }
+        } else {
+          // Show distribution by categories
+          const distributionKey = packageCategory || 'Uncategorized'
+          packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
+        }
       })
 
       const packageDistribution = Object.entries(packageStats).map(([name, value], index) => ({
@@ -259,22 +396,31 @@ export default function Dashboard({ organizationId }) {
         color: COLORS[index % COLORS.length]
       }))
 
-      // Weekly data (mock for now - would need daily aggregation)
-      const weeklyData = [
-        { day: 'Sun', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Mon', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Tue', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Wed', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Thu', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Fri', clients: Math.floor(Math.random() * 20) + 40 },
-        { day: 'Sat', clients: Math.floor(Math.random() * 20) + 40 }
-      ]
+      // Weekly data - calculate based on selected date range
+      const weeklyData = []
+      const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+      for (let i = 0; i < 7; i++) {
+        const dayStart = new Date(dateRange.start)
+        dayStart.setDate(dayStart.getDate() + i)
+        const dayEnd = new Date(dayStart)
+        dayEnd.setHours(23, 59, 59, 999)
+
+        const dayClients = clients?.filter(client =>
+          new Date(client.created_at).toDateString() === dayStart.toDateString()
+        ).length || 0
+
+        weeklyData.push({
+          day: daysOfWeek[dayStart.getDay()],
+          clients: dayClients
+        })
+      }
 
       const dashboardData = {
-        newJoined: { value: newThisMonth, growth: newJoinedGrowth },
-        activeClients: { value: activeClients, growth: 8.2 }, // Mock growth
-        revenue: { value: revenue, growth: 15.3 }, // Mock growth
-        renewed: { value: renewedThisMonth, growth: -2.1 }, // Mock growth
+        newJoined: { value: newInRange, growth: newJoinedGrowth },
+        activeClients: { value: activeClients, growth: 8.2 }, // Could calculate real growth
+        revenue: { value: revenue, growth: renewedGrowth }, // Using renewed growth as revenue growth
+        renewed: { value: renewedInPeriod, growth: renewedGrowth },
         totalClients,
         clientGrowth: 20, // Mock
         expiredPlans,
@@ -284,7 +430,7 @@ export default function Dashboard({ organizationId }) {
         weeklyData
       }
 
-      console.log('Dashboard data calculated:', dashboardData)
+      console.log('Dashboard data calculated for range:', dateRange)
       setDashboardData(dashboardData)
 
     } catch (error) {
@@ -334,9 +480,14 @@ export default function Dashboard({ organizationId }) {
           </div>
           <div className="flex items-center space-x-3">
             {/* Date Range Selector */}
-            <button className="flex items-center space-x-2 px-4 py-2 border border-border-light rounded-lg hover:bg-secondary-50 transition-colors">
+            <button
+              onClick={() => setShowDatePicker(true)}
+              className="flex items-center space-x-2 px-4 py-2 border border-border-light rounded-lg hover:bg-secondary-50 transition-colors"
+            >
               <Calendar className="h-4 w-4 text-secondary-600" />
-              <span className="text-sm text-text-primary">Oct 18–Nov 18</span>
+              <span className="text-sm text-text-primary">
+                {dateRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–{dateRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
               <ChevronDown className="h-3 w-3 text-secondary-400" />
             </button>
 
@@ -412,14 +563,19 @@ export default function Dashboard({ organizationId }) {
         {/* Package Distribution */}
         <div className="bg-white rounded-xl shadow-soft border border-border-light">
           <div className="p-6 border-b border-border-light">
-            <h3 className="text-lg font-semibold text-gray-900">{t('packageDistribution')}</h3>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {packageFilters.category ? `${packageFilters.category} - Package Types` : t('packageDistribution')}
+            </h3>
             <div className="flex space-x-4 mt-2">
-              <select className="px-3 py-1 text-sm border border-gray-300 rounded-lg">
-                <option>Gym</option>
-              </select>
-              <select className="px-3 py-1 text-sm border border-gray-300 rounded-lg">
-                <option>Monthly</option>
-                <option>Yearly</option>
+              <select
+                value={packageFilters.category}
+                onChange={(e) => setPackageFilters(prev => ({ ...prev, category: e.target.value }))}
+                className="px-3 py-1 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Categories</option>
+                {availableCategories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -578,6 +734,106 @@ export default function Dashboard({ organizationId }) {
           </div>
         </div>
       </div>
+
+      {/* Date Picker Modal */}
+      {showDatePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-secondary-900 bg-opacity-50 backdrop-blur-sm" onClick={() => setShowDatePicker(false)} />
+
+          <div className="relative bg-bg-card rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-text-primary">Select Date Range</h2>
+              <button
+                onClick={() => setShowDatePicker(false)}
+                className="p-2 rounded-lg hover:bg-secondary-100 transition-colors"
+              >
+                <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text-primary mb-2">Start Date</label>
+                <input
+                  type="date"
+                  value={dateRange.start.toISOString().split('T')[0]}
+                  onChange={(e) => {
+                    const newStart = new Date(e.target.value)
+                    setDateRange(prev => ({
+                      ...prev,
+                      start: newStart
+                    }))
+                  }}
+                  className="w-full px-3 py-2 border border-border-light rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-primary mb-2">End Date</label>
+                <input
+                  type="date"
+                  value={dateRange.end.toISOString().split('T')[0]}
+                  onChange={(e) => {
+                    const newEnd = new Date(e.target.value)
+                    setDateRange(prev => ({
+                      ...prev,
+                      end: newEnd
+                    }))
+                  }}
+                  className="w-full px-3 py-2 border border-border-light rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={() => {
+                    // Reset to last 30 days
+                    const endDate = new Date()
+                    const startDate = new Date()
+                    startDate.setDate(endDate.getDate() - 30)
+                    setDateRange({ start: startDate, end: endDate })
+                  }}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-600 bg-secondary-100 hover:bg-secondary-200 rounded-lg transition-colors"
+                >
+                  Last 30 Days
+                </button>
+                <button
+                  onClick={() => {
+                    // Reset to this month
+                    const now = new Date()
+                    const startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+                    const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+                    setDateRange({ start: startDate, end: endDate })
+                  }}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-600 bg-secondary-100 hover:bg-secondary-200 rounded-lg transition-colors"
+                >
+                  This Month
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-border-light">
+              <button
+                onClick={() => setShowDatePicker(false)}
+                className="px-4 py-2 text-sm font-medium text-secondary-600 hover:bg-secondary-50 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowDatePicker(false)
+                  fetchDashboardData()
+                }}
+                className="px-4 py-2 text-sm font-medium text-text-inverse bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Client Form Modal */}
       {showClientForm && (

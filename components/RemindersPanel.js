@@ -19,7 +19,7 @@ export default function RemindersPanel({ organizationId }) {
         .select(`
           *,
           clients:client_id (id, name, email, phone),
-          packages:package_id (id, name, price, duration_days)
+          packages:package_id (id, name, price, duration_days, category)
         `)
         .eq('clients.organization_id', organizationId)
 

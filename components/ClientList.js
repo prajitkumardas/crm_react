@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseWithRetry } from '../lib/supabase'
 import { getStatusColor, getStatusLabel } from '../lib/packageUtils'
 import { exportClientsToExcel } from '../lib/exportUtils'
 import ClientForm from './ClientForm'
 import ConfirmationDialog from './ConfirmationDialog'
+import BulkMessageModal from './BulkMessageModal'
 
 export default function ClientList({ organizationId, onClientSelect }) {
   const [clients, setClients] = useState([])
@@ -17,6 +18,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
   const [openMenuId, setOpenMenuId] = useState(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [clientToDelete, setClientToDelete] = useState(null)
+  const [showBulkMessageModal, setShowBulkMessageModal] = useState(false)
 
   // Advanced filter states
   const [showFilters, setShowFilters] = useState(false)
@@ -28,8 +30,44 @@ export default function ClientList({ organizationId, onClientSelect }) {
   const [ageGroup, setAgeGroup] = useState('')
 
   useEffect(() => {
-    fetchData()
+    let mounted = true
+    let fetching = false
+
+    // Reset loading state on mount
+    setLoading(true)
+
+    const fetchDataWrapper = async () => {
+      if (fetching || !mounted) return
+      fetching = true
+      try {
+        await fetchData()
+      } finally {
+        if (mounted) {
+          fetching = false
+        }
+      }
+    }
+
+    fetchDataWrapper()
+
+    return () => {
+      mounted = false
+    }
   }, [organizationId])
+
+  // Reset loading state when component becomes visible again
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && loading) {
+        // Component became visible again, reset loading if stuck
+        setLoading(true)
+        fetchData()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [loading])
 
   // Close menu and filters when clicking outside
   useEffect(() => {
@@ -48,42 +86,46 @@ export default function ClientList({ organizationId, onClientSelect }) {
 
   const fetchData = async () => {
     try {
-      // Fetch clients
-      const { data: clientsData, error: clientsError } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('organization_id', organizationId)
-        .order('name')
+      // Fetch all data in parallel with retry logic
+      const [clientsResult, packagesResult, clientPackagesResult] = await Promise.all([
+        supabaseWithRetry(() => supabase
+          .from('clients')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .order('name')
+        ),
+        supabaseWithRetry(() => supabase
+          .from('packages')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .order('category', { ascending: true })
+          .order('name', { ascending: true })
+        ),
+        supabaseWithRetry(() => supabase
+          .from('client_packages')
+          .select(`
+            *,
+            clients:client_id (id, name),
+            packages:package_id (id, name, category)
+          `)
+          .eq('clients.organization_id', organizationId)
+        )
+      ]);
 
-      if (clientsError) throw clientsError
+      // Check for errors
+      if (clientsResult.error) throw clientsResult.error;
+      if (packagesResult.error) throw packagesResult.error;
+      if (clientPackagesResult.error) throw clientPackagesResult.error;
 
-      // Fetch packages
-      const { data: packagesData, error: packagesError } = await supabase
-        .from('packages')
-        .select('*')
-        .eq('organization_id', organizationId)
-        .order('category', { ascending: true })
-        .order('name', { ascending: true })
-
-      if (packagesError) throw packagesError
-
-      // Fetch client packages with status
-      const { data: clientPackagesData, error: cpError } = await supabase
-        .from('client_packages')
-        .select(`
-          *,
-          clients:client_id (id, name),
-          packages:package_id (id, name, category)
-        `)
-        .eq('clients.organization_id', organizationId)
-
-      if (cpError) throw cpError
-
-      setClients(clientsData || [])
-      setPackages(packagesData || [])
-      setClientPackages(clientPackagesData || [])
+      setClients(clientsResult.data || [])
+      setPackages(packagesResult.data || [])
+      setClientPackages(clientPackagesResult.data || [])
     } catch (error) {
-      console.error('Error fetching data:', error)
+      console.error('Error fetching data:', error);
+      // Don't show alert for auth errors as they're handled by session management
+      if (!error.message?.includes('JWT') && !error.message?.includes('auth')) {
+        alert('Error loading client data. Please try refreshing the page.');
+      }
     } finally {
       setLoading(false)
     }
@@ -267,7 +309,8 @@ export default function ClientList({ organizationId, onClientSelect }) {
     // Search filter
     const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           client.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          client.phone?.includes(searchTerm)
+                          client.phone?.includes(searchTerm) ||
+                          client.whatsapp_number?.includes(searchTerm)
 
     if (!matchesSearch) return false
 
@@ -366,7 +409,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
 
   const handleExport = () => {
     try {
-      exportClientsToExcel(filteredClients)
+      exportClientsToExcel(filteredClients, clientPackages)
     } catch (error) {
       console.error('Error exporting clients:', error)
       alert('Error exporting data')
@@ -387,25 +430,34 @@ export default function ClientList({ organizationId, onClientSelect }) {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
         <div className="flex space-x-3">
-          <button
-            onClick={handleExport}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Export Data
-          </button>
-          <button
-            onClick={() => setShowForm(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Client
-          </button>
-        </div>
+           <button
+             onClick={() => setShowBulkMessageModal(true)}
+             className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
+           >
+             <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+             </svg>
+             Bulk Message
+           </button>
+           <button
+             onClick={handleExport}
+             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
+           >
+             <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+             </svg>
+             Export Data
+           </button>
+           <button
+             onClick={() => setShowForm(true)}
+             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center"
+           >
+             <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+             </svg>
+             Add Client
+           </button>
+         </div>
       </div>
 
       {/* Search and Filters */}
@@ -414,7 +466,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
           <div className="flex-1">
             <input
               type="text"
-              placeholder="Search by name, email, or phone..."
+              placeholder="Search by name, email, phone, or WhatsApp..."
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -616,7 +668,11 @@ export default function ClientList({ organizationId, onClientSelect }) {
                       </span>
                     </div>
                     <div className="mt-3 flex items-start justify-between text-sm text-gray-600">
-                      <span>{client.phone || 'No phone'}</span>
+                      <div>
+                        {client.phone && <div>📞 {client.phone}</div>}
+                        {client.whatsapp_number && <div>💬 {client.whatsapp_number}</div>}
+                        {!client.phone && !client.whatsapp_number && <div>No contact</div>}
+                      </div>
                       <div className="text-right text-xs">
                         {clientInfo.packages === 'No Package' ? (
                           <div className="text-gray-500">No Package</div>
@@ -675,7 +731,7 @@ export default function ClientList({ organizationId, onClientSelect }) {
                   Name
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Phone
+                  Contact
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Category
@@ -725,7 +781,11 @@ export default function ClientList({ organizationId, onClientSelect }) {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {client.phone || '-'}
+                        <div>
+                          {client.phone && <div>📞 {client.phone}</div>}
+                          {client.whatsapp_number && <div>💬 {client.whatsapp_number}</div>}
+                          {!client.phone && !client.whatsapp_number && <div>-</div>}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {clientInfo.packageName}
@@ -812,6 +872,12 @@ export default function ClientList({ organizationId, onClientSelect }) {
         message={`Are you sure you want to delete "${clientToDelete?.name}"? This action cannot be undone.`}
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
+      />
+
+      <BulkMessageModal
+        isOpen={showBulkMessageModal}
+        onClose={() => setShowBulkMessageModal(false)}
+        organizationId={organizationId}
       />
     </div>
   )
