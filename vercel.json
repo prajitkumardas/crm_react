@@ -1,20 +1,11 @@
 {
   "version": 2,
   "functions": {
-    "app/**/*.js": {
+    "app/api/**/*.js": {
       "maxDuration": 15
     }
   },
   "regions": ["fra1"],
-  "env": {
-    "NODE_ENV": "production"
-  },
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",

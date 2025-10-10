@@ -23,7 +23,7 @@ import {
   ResponsiveContainer
 } from 'recharts'
 
-const COLORS = ['#5B6CFF', '#10B981', '#F59E0B', '#EF4444']
+const COLORS = ['#3A7AFE', '#10B981', '#FFA84C', '#EF4444']
 
 export default function Dashboard({ organizationId }) {
   const { t } = useTranslation()
@@ -34,17 +34,29 @@ export default function Dashboard({ organizationId }) {
   const [dateRange, setDateRange] = useState(() => {
     const endDate = new Date()
     const startDate = new Date()
-    startDate.setDate(endDate.getDate() - 30) // Default to last 30 days
+    startDate.setDate(endDate.getDate() - 365) // Default to last 365 days to show more data
     return {
       start: startDate,
       end: endDate
     }
   })
+  const [appliedDateRange, setAppliedDateRange] = useState(() => {
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(endDate.getDate() - 365) // Default to last 365 days to show more data
+    return {
+      start: startDate,
+      end: endDate
+    }
+  }) // Applied date range for data fetching
   const [packageFilters, setPackageFilters] = useState({
     category: ''
   })
+  const [recentlyJoinedFilter, setRecentlyJoinedFilter] = useState('today') // 'today', 'thisWeek', 'thisMonth'
   const [availableCategories, setAvailableCategories] = useState([])
   const [availableTypes, setAvailableTypes] = useState([])
+  const [clientPackages, setClientPackages] = useState([]) // Store client packages separately
+  const [clients, setClients] = useState([]) // Store clients separately
   const [dashboardData, setDashboardData] = useState({
     newJoined: { value: 0, growth: 0 },
     activeClients: { value: 0, growth: 0 },
@@ -59,6 +71,15 @@ export default function Dashboard({ organizationId }) {
     weeklyData: []
   })
 
+  // Function to fetch data (defined outside useEffect for reuse)
+  const fetchData = async () => {
+    try {
+      await fetchDashboardData()
+    } catch (error) {
+      console.error('Error fetching data:', error)
+    }
+  }
+
   useEffect(() => {
     let mounted = true
     let fetching = false
@@ -66,11 +87,11 @@ export default function Dashboard({ organizationId }) {
     // Reset loading state on mount
     setLoading(true)
 
-    const fetchData = async () => {
+    const doFetchData = async () => {
       if (fetching || !mounted) return
       fetching = true
       try {
-        await fetchDashboardData()
+        await fetchData()
       } finally {
         if (mounted) {
           fetching = false
@@ -78,7 +99,7 @@ export default function Dashboard({ organizationId }) {
       }
     }
 
-    fetchData()
+    doFetchData()
 
     // Set up real-time subscriptions with cleanup check
     const clientsSubscription = supabase
@@ -90,7 +111,7 @@ export default function Dashboard({ organizationId }) {
         filter: `organization_id=eq.${organizationId}`
       }, () => {
         if (mounted && !fetching) {
-          fetchData()
+          doFetchData()
         }
       })
       .subscribe()
@@ -104,7 +125,7 @@ export default function Dashboard({ organizationId }) {
         filter: `organization_id=eq.${organizationId}`
       }, () => {
         if (mounted && !fetching) {
-          fetchData()
+          doFetchData()
         }
       })
       .subscribe()
@@ -117,7 +138,7 @@ export default function Dashboard({ organizationId }) {
         table: 'client_packages'
       }, () => {
         if (mounted && !fetching) {
-          fetchData()
+          doFetchData()
         }
       })
       .subscribe()
@@ -130,7 +151,7 @@ export default function Dashboard({ organizationId }) {
         table: 'checkins'
       }, () => {
         if (mounted && !fetching) {
-          fetchData()
+          doFetchData()
         }
       })
       .subscribe()
@@ -143,7 +164,22 @@ export default function Dashboard({ organizationId }) {
       clientPackagesSubscription.unsubscribe()
       checkinsSubscription.unsubscribe()
     }
-  }, [organizationId, dateRange, packageFilters])
+  }, [organizationId, appliedDateRange])
+
+  // Separate effect for package distribution updates when filter changes
+  useEffect(() => {
+    if (clientPackages.length > 0) {
+      updatePackageDistribution()
+    }
+  }, [packageFilters.category, clientPackages, appliedDateRange])
+
+  // Separate effect for recently joined filter updates
+  useEffect(() => {
+    // Recalculate recently joined data when filter changes
+    if (clients.length > 0) {
+      updateRecentlyJoinedData()
+    }
+  }, [recentlyJoinedFilter, clients])
 
   // Reset loading state when component becomes visible again
   useEffect(() => {
@@ -159,6 +195,103 @@ export default function Dashboard({ organizationId }) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [loading])
 
+  // Function to update recently joined data based on current filter
+  const updateRecentlyJoinedData = () => {
+    let filteredClients = clients?.sort((a, b) =>
+      new Date(b.created_at) - new Date(a.created_at)
+    ) || []
+
+    const now = new Date()
+    if (recentlyJoinedFilter === 'today') {
+      const today = new Date(now)
+      today.setHours(0, 0, 0, 0)
+      filteredClients = filteredClients.filter(client => new Date(client.created_at) >= today)
+    } else if (recentlyJoinedFilter === 'thisWeek') {
+      const weekAgo = new Date(now)
+      weekAgo.setDate(now.getDate() - 7)
+      filteredClients = filteredClients.filter(client => new Date(client.created_at) >= weekAgo)
+    } else if (recentlyJoinedFilter === 'thisMonth') {
+      const monthAgo = new Date(now)
+      monthAgo.setDate(now.getDate() - 30)
+      filteredClients = filteredClients.filter(client => new Date(client.created_at) >= monthAgo)
+    }
+
+    const recentlyJoined = filteredClients.slice(0, 10).map(client => ({
+      id: client.id,
+      clientId: client.client_id || 'N/A',
+      name: client.name,
+      plan: clientPackages?.find(cp => cp.client_id === client.id)?.packages?.name || 'No Plan',
+      joinDate: new Date(client.created_at).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }),
+      initials: client.name.split(' ').map(n => n[0]).join('').toUpperCase()
+    }))
+
+    // Update only the recently joined data in dashboard data
+    setDashboardData(prev => ({
+      ...prev,
+      recentlyJoined
+    }))
+  }
+
+  // Function to update package distribution based on current filters
+  const updatePackageDistribution = (packages = clientPackages) => {
+    const packageStats = {}
+
+    packages.forEach(cp => {
+      if (!cp.packages) return
+
+      // Filter by date range - only include packages that started within the selected period
+      const packageStartDate = new Date(cp.start_date)
+      if (packageStartDate < appliedDateRange.start || packageStartDate > appliedDateRange.end) return
+
+      let packageCategory = ''
+      let packageType = ''
+
+      if (cp.packages.category && cp.packages.category.includes(' - ')) {
+        const [cat, type] = cp.packages.category.split(' - ')
+        packageCategory = cat.trim()
+        packageType = type.trim()
+      } else if (cp.packages.category) {
+        packageCategory = cp.packages.category.trim()
+        // Fallback to duration-based type
+        const duration = cp.packages.duration_days
+        if (duration <= 31) packageType = 'Monthly'
+        else if (duration <= 93) packageType = 'Quarterly'
+        else if (duration <= 186) packageType = 'Half-yearly'
+        else packageType = 'Annually'
+      }
+
+      // If a category is selected, show package types within that category
+      // If no category is selected, show distribution by categories
+      if (packageFilters.category) {
+        // Show package types for the selected category
+        if (packageCategory === packageFilters.category) {
+          const distributionKey = packageType || 'Other'
+          packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
+        }
+      } else {
+        // Show distribution by categories
+        const distributionKey = packageCategory || 'Uncategorized'
+        packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
+      }
+    })
+
+    const packageDistribution = Object.entries(packageStats).map(([name, value], index) => ({
+      name,
+      value,
+      color: COLORS[index % COLORS.length]
+    }))
+
+    // Update only the package distribution in dashboard data
+    setDashboardData(prev => ({
+      ...prev,
+      packageDistribution
+    }))
+  }
+
   const fetchDashboardData = async () => {
     try {
       // Fetch clients within date range
@@ -166,10 +299,11 @@ export default function Dashboard({ organizationId }) {
         .from('clients')
         .select('*')
         .eq('organization_id', organizationId)
-        .gte('created_at', dateRange.start.toISOString())
-        .lte('created_at', dateRange.end.toISOString())
+        .gte('created_at', appliedDateRange.start.toISOString())
+        .lte('created_at', appliedDateRange.end.toISOString())
 
       if (clientsError) throw clientsError
+      setClients(clients || []) // Store clients separately
 
       // Fetch all clients for total count (not filtered by date)
       const { data: allClients, error: allClientsError } = await supabase
@@ -222,16 +356,19 @@ export default function Dashboard({ organizationId }) {
       setAvailableTypes(Array.from(types).sort())
 
       // Fetch client packages with package details - filter by organization through client relationship
-      const { data: clientPackages, error: packagesError } = await supabase
+      const { data: clientPackagesData, error: packagesError } = await supabase
         .from('client_packages')
         .select(`
           *,
-          clients!inner (id, name, email, organization_id),
+          clients (id, name, email, organization_id),
           packages:package_id (id, name, price, duration_days, category)
         `)
-        .eq('clients.organization_id', organizationId)
 
       if (packagesError) throw packagesError
+
+      // Filter client packages by organization in code to make it more robust
+      const clientPackages = clientPackagesData?.filter(cp => cp.clients?.organization_id === organizationId) || []
+      setClientPackages(clientPackages) // Store client packages separately
 
       // Fetch checkins within date range
       const { data: allCheckins, error: checkinsError } = await supabase
@@ -240,8 +377,8 @@ export default function Dashboard({ organizationId }) {
           *,
           clients (id, name, organization_id)
         `)
-        .gte('check_in_time', dateRange.start.toISOString().split('T')[0])
-        .lte('check_in_time', dateRange.end.toISOString().split('T')[0] + 'T23:59:59')
+        .gte('check_in_time', appliedDateRange.start.toISOString().split('T')[0])
+        .lte('check_in_time', appliedDateRange.end.toISOString().split('T')[0] + 'T23:59:59')
 
       // Filter checkins by organization in code
       const filteredCheckins = (allCheckins?.filter(checkin =>
@@ -268,10 +405,10 @@ export default function Dashboard({ organizationId }) {
       const newInRange = clients?.length || 0
 
       // Calculate growth by comparing with previous period of same length
-      const rangeDays = Math.ceil((dateRange.end - dateRange.start) / (1000 * 60 * 60 * 24))
-      const previousStart = new Date(dateRange.start)
+      const rangeDays = Math.ceil((appliedDateRange.end - appliedDateRange.start) / (1000 * 60 * 60 * 24))
+      const previousStart = new Date(appliedDateRange.start)
       previousStart.setDate(previousStart.getDate() - rangeDays)
-      const previousEnd = new Date(dateRange.start)
+      const previousEnd = new Date(appliedDateRange.start)
       previousEnd.setDate(previousEnd.getDate() - 1)
 
       const { data: previousClients } = await supabase
@@ -287,19 +424,23 @@ export default function Dashboard({ organizationId }) {
 
       // Active clients (clients with active packages in the selected period)
       const activeClients = clientPackages?.filter(cp =>
-        cp.status === 'active'
+        cp.status === 'active' &&
+        new Date(cp.start_date) <= appliedDateRange.end &&
+        (cp.end_date === null || new Date(cp.end_date) >= appliedDateRange.start)
       ).length || 0
 
       // Revenue calculation (sum of package prices for active packages in the period)
       const revenue = clientPackages?.filter(cp =>
-        cp.status === 'active'
+        cp.status === 'active' &&
+        new Date(cp.start_date) <= appliedDateRange.end &&
+        (cp.end_date === null || new Date(cp.end_date) >= appliedDateRange.start)
       ).reduce((sum, cp) => sum + (cp.packages?.price || 0), 0) || 0
 
       // Renewed (packages renewed in the selected period)
       const renewedInPeriod = clientPackages?.filter(cp =>
         cp.status === 'active' &&
-        new Date(cp.updated_at) >= dateRange.start &&
-        new Date(cp.updated_at) <= dateRange.end
+        new Date(cp.updated_at) >= appliedDateRange.start &&
+        new Date(cp.updated_at) <= appliedDateRange.end
       ).length || 0
 
       // Calculate renewed growth by comparing with previous period
@@ -330,78 +471,19 @@ export default function Dashboard({ organizationId }) {
         plan: cp.packages?.name || 'Unknown Plan'
       })) || []
 
-      // Recently joined clients in the selected period
-      const recentlyJoined = clients?.sort((a, b) =>
-        new Date(b.created_at) - new Date(a.created_at)
-      ).slice(0, 3).map(client => ({
-        id: client.id,
-        clientId: client.client_id || 'N/A',
-        name: client.name,
-        plan: clientPackages?.find(cp => cp.client_id === client.id)?.packages?.name || 'No Plan',
-        joinDate: new Date(client.created_at).toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric'
-        }),
-        initials: client.name.split(' ').map(n => n[0]).join('').toUpperCase()
-      })) || []
+      // Recently joined data will be calculated separately when clients are loaded
 
       // Attendance in the selected period
       const todaysAttendance = filteredCheckins?.slice(0, 5) || []
 
-      // Package distribution for packages in the selected period
-      const packageStats = {}
-      clientPackages?.forEach(cp => {
-        if (!cp.packages) return
-
-        // Filter by date range - only include packages that started within the selected period
-        const packageStartDate = new Date(cp.start_date)
-        if (packageStartDate < dateRange.start || packageStartDate > dateRange.end) return
-
-        let packageCategory = ''
-        let packageType = ''
-
-        if (cp.packages.category && cp.packages.category.includes(' - ')) {
-          const [cat, type] = cp.packages.category.split(' - ')
-          packageCategory = cat.trim()
-          packageType = type.trim()
-        } else if (cp.packages.category) {
-          packageCategory = cp.packages.category.trim()
-          // Fallback to duration-based type
-          const duration = cp.packages.duration_days
-          if (duration <= 31) packageType = 'Monthly'
-          else if (duration <= 93) packageType = 'Quarterly'
-          else if (duration <= 186) packageType = 'Half-yearly'
-          else packageType = 'Annually'
-        }
-
-        // If a category is selected, show package types within that category
-        // If no category is selected, show distribution by categories
-        if (packageFilters.category) {
-          // Show package types for the selected category
-          if (packageCategory === packageFilters.category) {
-            const distributionKey = packageType || 'Other'
-            packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
-          }
-        } else {
-          // Show distribution by categories
-          const distributionKey = packageCategory || 'Uncategorized'
-          packageStats[distributionKey] = (packageStats[distributionKey] || 0) + 1
-        }
-      })
-
-      const packageDistribution = Object.entries(packageStats).map(([name, value], index) => ({
-        name,
-        value,
-        color: COLORS[index % COLORS.length]
-      }))
+      // Package distribution will be calculated separately when data is loaded
 
       // Weekly data - calculate based on selected date range
       const weeklyData = []
       const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
       for (let i = 0; i < 7; i++) {
-        const dayStart = new Date(dateRange.start)
+        const dayStart = new Date(appliedDateRange.start)
         dayStart.setDate(dayStart.getDate() + i)
         const dayEnd = new Date(dayStart)
         dayEnd.setHours(23, 59, 59, 999)
@@ -424,14 +506,18 @@ export default function Dashboard({ organizationId }) {
         totalClients,
         clientGrowth: 20, // Mock
         expiredPlans,
-        recentlyJoined,
+        recentlyJoined: [], // Will be updated separately
         todaysAttendance,
-        packageDistribution,
+        packageDistribution: [], // Will be updated separately
         weeklyData
       }
 
-      console.log('Dashboard data calculated for range:', dateRange)
+      console.log('Dashboard data calculated for range:', appliedDateRange)
       setDashboardData(dashboardData)
+
+      // Calculate package distribution and recently joined data after data is loaded
+      updatePackageDistribution(clientPackages || [])
+      updateRecentlyJoinedData()
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
@@ -447,7 +533,7 @@ export default function Dashboard({ organizationId }) {
   const GrowthIndicator = ({ growth }) => {
     const isPositive = growth >= 0
     return (
-      <div className={`flex items-center text-xs font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+      <div className={`flex items-center text-xs font-medium ${isPositive ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
         {isPositive ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
         {Math.abs(growth)}%
       </div>
@@ -459,7 +545,7 @@ export default function Dashboard({ organizationId }) {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
         </div>
       </div>
     )
@@ -471,10 +557,10 @@ export default function Dashboard({ organizationId }) {
       <div className="mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-text-primary mb-2">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
               {t('welcomeBack')}, Prajit
             </h1>
-            <p className="text-text-secondary">
+            <p className="text-gray-600 dark:text-gray-400">
               {t('dashboardOverview')}
             </p>
           </div>
@@ -482,19 +568,19 @@ export default function Dashboard({ organizationId }) {
             {/* Date Range Selector */}
             <button
               onClick={() => setShowDatePicker(true)}
-              className="flex items-center space-x-2 px-4 py-2 border border-border-light rounded-lg hover:bg-secondary-50 transition-colors"
+              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
-              <Calendar className="h-4 w-4 text-secondary-600" />
-              <span className="text-sm text-text-primary">
+              <Calendar className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+              <span className="text-sm text-gray-900 dark:text-white">
                 {dateRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–{dateRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </span>
-              <ChevronDown className="h-3 w-3 text-secondary-400" />
+              <ChevronDown className="h-3 w-3 text-gray-400 dark:text-gray-500" />
             </button>
 
             {/* Add Client Button */}
             <button
               onClick={() => setShowClientForm(true)}
-              className="flex items-center px-4 py-2 bg-primary-600 text-text-inverse rounded-lg hover:bg-primary-700 transition-colors"
+              className="btn-primary flex items-center"
             >
               <Plus className="h-4 w-4 mr-2" />
               {t('addClient')}
@@ -504,56 +590,56 @@ export default function Dashboard({ organizationId }) {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl shadow-soft border border-border-light p-6 hover:shadow-medium transition-shadow">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700 p-6 hover:shadow-medium transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <div className="p-2 rounded-lg bg-green-50">
-              <User className="h-6 w-6 text-green-600" />
+            <div className="p-2 rounded-lg bg-green-50 dark:bg-green-900/20">
+              <User className="h-6 w-6 text-green-600 dark:text-green-400" />
             </div>
             <GrowthIndicator growth={dashboardData.newJoined.growth} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-900 mb-1">{dashboardData.newJoined.value}</p>
-            <p className="text-sm text-gray-600 font-medium">{t('newJoined')}</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{dashboardData.newJoined.value}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('newJoined')}</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-soft border border-border-light p-6 hover:shadow-medium transition-shadow">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700 p-6 hover:shadow-medium transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <div className="p-2 rounded-lg bg-blue-50">
-              <User className="h-6 w-6 text-blue-600" />
+            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+              <User className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
             <GrowthIndicator growth={dashboardData.activeClients.growth} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-900 mb-1">{dashboardData.activeClients.value}</p>
-            <p className="text-sm text-gray-600 font-medium">{t('activeClients')}</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{dashboardData.activeClients.value}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('activeClients')}</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-soft border border-border-light p-6 hover:shadow-medium transition-shadow">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700 p-6 hover:shadow-medium transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <div className="p-2 rounded-lg bg-blue-50">
-              <TrendingUp className="h-6 w-6 text-blue-600" />
+            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+              <TrendingUp className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
             <GrowthIndicator growth={dashboardData.revenue.growth} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-900 mb-1">{formatCurrency(dashboardData.revenue.value)}</p>
-            <p className="text-sm text-gray-600 font-medium">{t('revenue')}</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{formatCurrency(dashboardData.revenue.value)}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('revenue')}</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-soft border border-border-light p-6 hover:shadow-medium transition-shadow">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700 p-6 hover:shadow-medium transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <div className="p-2 rounded-lg bg-orange-50">
-              <TrendingUp className="h-6 w-6 text-orange-600" />
+            <div className="p-2 rounded-lg bg-orange-50 dark:bg-orange-900/20">
+              <TrendingUp className="h-6 w-6 text-orange-600 dark:text-orange-400" />
             </div>
             <GrowthIndicator growth={dashboardData.renewed.growth} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-900 mb-1">{dashboardData.renewed.value}</p>
-            <p className="text-sm text-gray-600 font-medium">{t('renewed')}</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{dashboardData.renewed.value}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('renewed')}</p>
           </div>
         </div>
       </div>
@@ -561,16 +647,16 @@ export default function Dashboard({ organizationId }) {
       {/* Top Row - Package Distribution, Recently Joined, Today's Attendance */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Package Distribution */}
-        <div className="bg-white rounded-xl shadow-soft border border-border-light">
-          <div className="p-6 border-b border-border-light">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {packageFilters.category ? `${packageFilters.category} - Package Types` : t('packageDistribution')}
-            </h3>
-            <div className="flex space-x-4 mt-2">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {packageFilters.category ? 'Package Types' : t('packageDistribution')}
+              </h3>
               <select
                 value={packageFilters.category}
                 onChange={(e) => setPackageFilters(prev => ({ ...prev, category: e.target.value }))}
-                className="px-3 py-1 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="form-input text-sm w-auto"
               >
                 <option value="">All Categories</option>
                 {availableCategories.map(category => (
@@ -579,93 +665,133 @@ export default function Dashboard({ organizationId }) {
               </select>
             </div>
           </div>
-          <div className="p-6">
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie
-                  data={dashboardData.packageDistribution}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {dashboardData.packageDistribution.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="p-l">
+            <div className="flex justify-center">
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart>
+                  <Pie
+                    data={dashboardData.packageDistribution}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={90}
+                    paddingAngle={3}
+                    dataKey="value"
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                  >
+                    {dashboardData.packageDistribution.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value, name) => [`${value} clients`, name]}
+                    contentStyle={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                      border: '1px solid #E5E7EB',
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
+                    }}
+                  />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={36}
+                    iconType="circle"
+                    formatter={(value, entry) => (
+                      <span style={{ color: entry.color }}>{value}</span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
         {/* Recently Joined */}
-        <div className="bg-white rounded-xl shadow-soft border border-border-light">
-          <div className="p-6 border-b border-border-light">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">{t('recentlyJoined')}</h3>
-              <a href="#" className="text-sm text-blue-600 hover:text-blue-700 font-medium">{t('seeAll')}</a>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('recentlyJoined')}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  {dashboardData.recentlyJoined.length} client{dashboardData.recentlyJoined.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+              <select
+                value={recentlyJoinedFilter}
+                onChange={(e) => setRecentlyJoinedFilter(e.target.value)}
+                className="form-input text-sm w-auto"
+              >
+                <option value="today">Today</option>
+                <option value="thisWeek">This Week</option>
+                <option value="thisMonth">This Month</option>
+              </select>
             </div>
           </div>
-          <div className="p-6">
-            <div className="space-y-4">
-              {dashboardData.recentlyJoined.map((client) => (
-                <div key={client.id} className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-sm flex-shrink-0">
-                    <span className="text-sm font-semibold text-white">{client.initials}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900">{client.name}</p>
-                        <div className="mt-1">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {client.clientId}
-                          </span>
+          <div className="card-body">
+            <div className="max-h-80 overflow-y-auto">
+              <div className="space-y-m">
+                {dashboardData.recentlyJoined.length > 0 ? (
+                  dashboardData.recentlyJoined.map((client) => (
+                    <div key={client.id} className="flex items-center space-x-m p-m rounded-medium hover:bg-bg-light dark:hover:bg-bg-dark transition-colors">
+                      <div className="h-xxl w-xxl rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-small flex-shrink-0">
+                        <span className="text-body font-semibold text-text-inverse">{client.initials}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-body font-semibold text-text-primary dark:text-text-primary-dark">{client.name}</p>
+                            <div className="mt-xs">
+                              <span className="status-info">
+                                {client.clientId}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-body text-text-secondary dark:text-text-secondary">{client.plan.replace(' - ', ' ')}</p>
+                            <p className="text-caption text-text-muted dark:text-text-muted mt-xs">{client.joinDate}</p>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm text-gray-600">{client.plan.replace(' - ', ' ')}</p>
-                        <p className="text-xs text-gray-500 mt-1">{client.joinDate}</p>
-                      </div>
                     </div>
+                  ))
+                ) : (
+                  <div className="text-center py-m">
+                    <p className="text-body text-text-secondary dark:text-text-secondary">No clients joined in the selected period</p>
                   </div>
-                </div>
-              ))}
+                )}
+              </div>
             </div>
           </div>
         </div>
 
         {/* Today's Attendance */}
-        <div className="bg-white rounded-xl shadow-soft border border-border-light">
-          <div className="p-6 border-b border-border-light">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">{t('todaysAttendance')}</h3>
-                <p className="text-sm text-gray-600">{dashboardData.todaysAttendance.length} (+20 {t('fromYesterday')})</p>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('todaysAttendance')}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{dashboardData.todaysAttendance.length} (+20 {t('fromYesterday')})</p>
               </div>
-              <a href="#" className="text-sm text-blue-600 hover:text-blue-700 font-medium">{t('seeAll')}</a>
+              <a href="#" className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">{t('seeAll')}</a>
             </div>
           </div>
           <div className="p-6">
             <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600">Client</th>
-                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600">Plan</th>
-                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600">Time</th>
+              <table className="table">
+                <thead className="table-header">
+                  <tr>
+                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wider">Client</th>
+                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wider">Plan</th>
+                    <th className="text-left py-2 px-4 text-sm font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wider">Time</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="table-body">
                   {dashboardData.todaysAttendance.slice(0, 3).map((attendance) => (
-                    <tr key={attendance.id} className="border-b border-gray-100">
-                      <td className="py-3 px-4 text-sm text-gray-900">{attendance.client}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{attendance.plan}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{attendance.time}</td>
+                    <tr key={attendance.id} className="table-row-hover">
+                      <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">{attendance.client}</td>
+                      <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{attendance.plan}</td>
+                      <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{attendance.time}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -678,26 +804,26 @@ export default function Dashboard({ organizationId }) {
       {/* Bottom Row - Plan Expired and Total Clients Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Plan Expired */}
-        <div className="bg-white rounded-xl shadow-soft border border-border-light">
-          <div className="p-6 border-b border-border-light">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">{t('planExpired')}</h3>
-              <a href="#" className="text-sm text-blue-600 hover:text-blue-700 font-medium">{t('seeAll')}</a>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('planExpired')}</h3>
+              <a href="#" className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">{t('seeAll')}</a>
             </div>
           </div>
           <div className="p-6">
             <div className="space-y-4">
               {dashboardData.expiredPlans.map((plan) => (
-                <div key={plan.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0">
+                <div key={plan.id} className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-600 last:border-b-0">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{plan.client} {plan.clientId}</p>
-                    <p className="text-sm text-gray-600">{plan.plan}</p>
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">{plan.client} {plan.clientId}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{plan.plan}</p>
                   </div>
                   <div className="flex space-x-2">
-                    <button className="p-2 text-gray-400 hover:text-blue-600 transition-colors">
+                    <button className="btn-icon text-gray-400 hover:text-blue-600 dark:text-gray-500 dark:hover:text-blue-400">
                       <Edit className="h-4 w-4" />
                     </button>
-                    <button className="p-2 text-gray-400 hover:text-orange-600 transition-colors">
+                    <button className="btn-icon text-gray-400 hover:text-orange-600 dark:text-gray-500 dark:hover:text-orange-400">
                       <Bell className="h-4 w-4" />
                     </button>
                   </div>
@@ -708,16 +834,16 @@ export default function Dashboard({ organizationId }) {
         </div>
 
         {/* Total Clients Chart */}
-        <div className="bg-white rounded-xl shadow-soft border border-border-light">
-          <div className="p-6 border-b border-border-light">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">{t('totalClient')}</h3>
-                <p className="text-sm text-gray-600">{dashboardData.totalClients} (+{dashboardData.clientGrowth} {t('increased')})</p>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('totalClient')}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{dashboardData.totalClients} (+{dashboardData.clientGrowth} {t('increased')})</p>
               </div>
               <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">Weekly</span>
-                <button className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-lg">Toggle</button>
+                <span className="text-sm text-gray-600 dark:text-gray-400">Weekly</span>
+                <button className="px-3 py-1 text-sm bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg">Toggle</button>
               </div>
             </div>
           </div>
@@ -728,7 +854,7 @@ export default function Dashboard({ organizationId }) {
                 <XAxis dataKey="day" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="clients" fill="#5B6CFF" />
+                <Bar dataKey="clients" fill="#3A7AFE" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -737,17 +863,15 @@ export default function Dashboard({ organizationId }) {
 
       {/* Date Picker Modal */}
       {showDatePicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-secondary-900 bg-opacity-50 backdrop-blur-sm" onClick={() => setShowDatePicker(false)} />
-
-          <div className="relative bg-bg-card rounded-2xl shadow-xl max-w-md w-full p-6">
+        <div className="modal-backdrop">
+          <div className="modal-content">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-text-primary">Select Date Range</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Select Date Range</h2>
               <button
                 onClick={() => setShowDatePicker(false)}
-                className="p-2 rounded-lg hover:bg-secondary-100 transition-colors"
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -755,49 +879,53 @@ export default function Dashboard({ organizationId }) {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">Start Date</label>
+                <label className="form-label">Start Date</label>
                 <input
                   type="date"
                   value={dateRange.start.toISOString().split('T')[0]}
                   onChange={(e) => {
                     const newStart = new Date(e.target.value)
+                    newStart.setHours(0, 0, 0, 0) // Set to start of day
                     setDateRange(prev => ({
                       ...prev,
                       start: newStart
                     }))
                   }}
-                  className="w-full px-3 py-2 border border-border-light rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  className="form-input"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">End Date</label>
+                <label className="form-label">End Date</label>
                 <input
                   type="date"
                   value={dateRange.end.toISOString().split('T')[0]}
                   onChange={(e) => {
                     const newEnd = new Date(e.target.value)
+                    newEnd.setHours(23, 59, 59, 999) // Set to end of day
                     setDateRange(prev => ({
                       ...prev,
                       end: newEnd
                     }))
                   }}
-                  className="w-full px-3 py-2 border border-border-light rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  className="form-input"
                 />
               </div>
 
               <div className="flex space-x-3 pt-4">
                 <button
                   onClick={() => {
-                    // Reset to last 30 days
+                    // Reset to last 365 days
                     const endDate = new Date()
                     const startDate = new Date()
-                    startDate.setDate(endDate.getDate() - 30)
-                    setDateRange({ start: startDate, end: endDate })
+                    startDate.setDate(endDate.getDate() - 365)
+                    const newRange = { start: startDate, end: endDate }
+                    setDateRange(newRange)
+                    setAppliedDateRange(newRange)
                   }}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-600 bg-secondary-100 hover:bg-secondary-200 rounded-lg transition-colors"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
                 >
-                  Last 30 Days
+                  Last 365 Days
                 </button>
                 <button
                   onClick={() => {
@@ -805,28 +933,30 @@ export default function Dashboard({ organizationId }) {
                     const now = new Date()
                     const startDate = new Date(now.getFullYear(), now.getMonth(), 1)
                     const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-                    setDateRange({ start: startDate, end: endDate })
+                    const newRange = { start: startDate, end: endDate }
+                    setDateRange(newRange)
+                    setAppliedDateRange(newRange)
                   }}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-600 bg-secondary-100 hover:bg-secondary-200 rounded-lg transition-colors"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
                 >
                   This Month
                 </button>
               </div>
             </div>
 
-            <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-border-light">
+            <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
               <button
                 onClick={() => setShowDatePicker(false)}
-                className="px-4 py-2 text-sm font-medium text-secondary-600 hover:bg-secondary-50 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => {
+                  setAppliedDateRange(dateRange)
                   setShowDatePicker(false)
-                  fetchDashboardData()
                 }}
-                className="px-4 py-2 text-sm font-medium text-text-inverse bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+                className="btn-primary"
               >
                 Apply
               </button>

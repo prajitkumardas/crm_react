@@ -292,18 +292,18 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Overlay */}
-      <div className="absolute inset-0 bg-secondary-900 bg-opacity-50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black bg-opacity-50 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-bg-card rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 dark:border-gray-700">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-border-light">
-          <h2 className="text-xl font-semibold text-text-primary">{client ? 'Edit Client' : 'Add New Client'}</h2>
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{client ? 'Edit Client' : 'Add New Client'}</h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-secondary-100 transition-colors"
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
-            <svg className="w-5 h-5 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -313,41 +313,41 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Personal Information */}
           <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Personal Information</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Personal Information</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="form-label">First Name *</label>
                 <input
                   type="text"
-                  className={`form-input ${errors.firstName ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.firstName ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.firstName}
                   onChange={(e) => handleInputChange('firstName', e.target.value)}
                   placeholder="Enter first name"
                 />
-                {errors.firstName && <p className="mt-1 text-sm text-danger-600">{errors.firstName}</p>}
+                {errors.firstName && <p className="mt-1 text-sm text-red-600">{errors.firstName}</p>}
               </div>
               <div>
                 <label className="form-label">Last Name *</label>
                 <input
                   type="text"
-                  className={`form-input ${errors.lastName ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.lastName ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.lastName}
                   onChange={(e) => handleInputChange('lastName', e.target.value)}
                   placeholder="Enter last name"
                 />
-                {errors.lastName && <p className="mt-1 text-sm text-danger-600">{errors.lastName}</p>}
+                {errors.lastName && <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>}
               </div>
               <div>
                 <label className="form-label">Age</label>
-                <div className="form-input bg-gray-50 text-gray-700 cursor-not-allowed">
+                <div className="form-input bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 cursor-not-allowed">
                   {calculateAge(formData.dateOfBirth) || 'Select date of birth'}
                 </div>
-                <p className="mt-1 text-xs text-gray-500">Calculated automatically from date of birth</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Calculated automatically from date of birth</p>
               </div>
               <div>
                 <label className="form-label">Gender *</label>
                 <select
-                  className={`form-input ${errors.gender ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.gender ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.gender}
                   onChange={(e) => handleInputChange('gender', e.target.value)}
                 >
@@ -356,50 +356,50 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                   <option value="female">Female</option>
                   <option value="other">Other</option>
                 </select>
-                {errors.gender && <p className="mt-1 text-sm text-danger-600">{errors.gender}</p>}
+                {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender}</p>}
               </div>
               <div>
                 <label className="form-label">Date of Birth *</label>
                 <input
                   type="date"
-                  className={`form-input ${errors.dateOfBirth ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.dateOfBirth ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.dateOfBirth}
                   onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
                   max={new Date().toISOString().split('T')[0]} // Cannot select future dates
                 />
-                {errors.dateOfBirth && <p className="mt-1 text-sm text-danger-600">{errors.dateOfBirth}</p>}
+                {errors.dateOfBirth && <p className="mt-1 text-sm text-red-600">{errors.dateOfBirth}</p>}
               </div>
             </div>
           </div>
 
           {/* Contact Information */}
           <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Contact Information</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Contact Information</h3>
             <div className="space-y-4">
               <div>
                 <label className="form-label">Mobile Number *</label>
                 <input
                   type="tel"
-                  className={`form-input ${errors.mobileNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.mobileNumber ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.mobileNumber}
                   onChange={(e) => handleInputChange('mobileNumber', e.target.value)}
                   placeholder="Enter 10-digit mobile number"
                   maxLength="10"
                 />
-                {errors.mobileNumber && <p className="mt-1 text-sm text-danger-600">{errors.mobileNumber}</p>}
+                {errors.mobileNumber && <p className="mt-1 text-sm text-red-600">{errors.mobileNumber}</p>}
               </div>
               <div>
                 <label className="form-label">WhatsApp Number</label>
                 <input
                   type="tel"
-                  className={`form-input ${errors.whatsappNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.whatsappNumber ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.whatsappNumber}
                   onChange={(e) => handleInputChange('whatsappNumber', e.target.value)}
                   placeholder="Enter 10-digit WhatsApp number"
                   maxLength="10"
                 />
-                {errors.whatsappNumber && <p className="mt-1 text-sm text-danger-600">{errors.whatsappNumber}</p>}
-                <p className="mt-1 text-xs text-gray-500">Leave empty if same as mobile number</p>
+                {errors.whatsappNumber && <p className="mt-1 text-sm text-red-600">{errors.whatsappNumber}</p>}
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Leave empty if same as mobile number</p>
               </div>
               <div>
                 <label className="form-label">Email ID</label>
@@ -415,55 +415,55 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                 <label className="form-label">Address *</label>
                 <textarea
                   rows="3"
-                  className={`form-input ${errors.address ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.address ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.address}
                   onChange={(e) => handleInputChange('address', e.target.value)}
                   placeholder="Enter full address"
                 />
-                {errors.address && <p className="mt-1 text-sm text-danger-600">{errors.address}</p>}
+                {errors.address && <p className="mt-1 text-sm text-red-600">{errors.address}</p>}
               </div>
             </div>
           </div>
 
           {/* Emergency Contact */}
           <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Emergency Contact</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Emergency Contact</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="form-label">Emergency Contact Name *</label>
                 <input
                   type="text"
-                  className={`form-input ${errors.emergencyContactName ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.emergencyContactName ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.emergencyContactName}
                   onChange={(e) => handleInputChange('emergencyContactName', e.target.value)}
                   placeholder="Enter emergency contact name"
                 />
-                {errors.emergencyContactName && <p className="mt-1 text-sm text-danger-600">{errors.emergencyContactName}</p>}
+                {errors.emergencyContactName && <p className="mt-1 text-sm text-red-600">{errors.emergencyContactName}</p>}
               </div>
               <div>
                 <label className="form-label">Emergency Number *</label>
                 <input
                   type="tel"
-                  className={`form-input ${errors.emergencyNumber ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                  className={`form-input ${errors.emergencyNumber ? 'border-red-500 focus:border-red-500' : ''}`}
                   value={formData.emergencyNumber}
                   onChange={(e) => handleInputChange('emergencyNumber', e.target.value)}
                   placeholder="Enter 10-digit emergency number"
                   maxLength="10"
                 />
-                {errors.emergencyNumber && <p className="mt-1 text-sm text-danger-600">{errors.emergencyNumber}</p>}
+                {errors.emergencyNumber && <p className="mt-1 text-sm text-red-600">{errors.emergencyNumber}</p>}
               </div>
             </div>
           </div>
 
           {/* Package Assignment */}
           <div>
-            <h3 className="text-lg font-medium text-text-primary mb-4">Package Assignment</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Package Assignment</h3>
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="form-label">Category</label>
                   <select
-                    className={`form-input ${errors.category ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                    className={`form-input ${errors.category ? 'border-red-500 focus:border-red-500' : ''}`}
                     value={formData.category}
                     onChange={(e) => handleInputChange('category', e.target.value)}
                   >
@@ -476,9 +476,9 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                       </option>
                     ))}
                   </select>
-                  {errors.category && <p className="mt-1 text-sm text-danger-600">{errors.category}</p>}
+                  {errors.category && <p className="mt-1 text-sm text-red-600">{errors.category}</p>}
                   {packageOptions.categories.length === 0 && (
-                    <p className="mt-1 text-sm text-gray-500">
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                       No valid packages found ({packages?.length || 0} total packages loaded).
                       Make sure packages have names and check the Plans section for category setup.
                     </p>
@@ -488,7 +488,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                 <div>
                   <label className="form-label">Plan Name</label>
                   <select
-                    className={`form-input ${errors.planName ? 'border-danger-500 focus:border-danger-500' : ''}`}
+                    className={`form-input ${errors.planName ? 'border-red-500 focus:border-red-500' : ''}`}
                     value={formData.planName}
                     onChange={(e) => handleInputChange('planName', e.target.value)}
                     disabled={!formData.category || packageOptions.categories.length === 0}
@@ -504,7 +504,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                       </option>
                     ))}
                   </select>
-                  {errors.planName && <p className="mt-1 text-sm text-danger-600">{errors.planName}</p>}
+                  {errors.planName && <p className="mt-1 text-sm text-red-600">{errors.planName}</p>}
                 </div>
               </div>
 
@@ -520,7 +520,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                   {(() => {
                     const selectedPackage = packageOptions.packages[`${formData.category}-${formData.planName}`]
                     return selectedPackage ? (
-                      <p className="mt-2 text-sm text-gray-600">
+                      <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                         Duration: {selectedPackage.duration_days} days • Price: ₹{selectedPackage.price}
                       </p>
                     ) : null
@@ -532,11 +532,11 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
                 <input
                   type="checkbox"
                   id="personalTrainer"
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-border-light rounded"
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                   checked={formData.personalTrainer}
                   onChange={(e) => handleInputChange('personalTrainer', e.target.checked)}
                 />
-                <label htmlFor="personalTrainer" className="ml-2 text-sm text-text-primary">
+                <label htmlFor="personalTrainer" className="ml-2 text-sm text-gray-900 dark:text-white">
                   Would you like to take a Personal Trainer?
                 </label>
               </div>
@@ -544,7 +544,7 @@ export default function ClientForm({ client, organizationId, packages, onClose, 
           </div>
 
           {/* Form Actions */}
-          <div className="flex justify-end space-x-3 pt-6 border-t border-border-light">
+          <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
             <button
               type="button"
               onClick={onClose}

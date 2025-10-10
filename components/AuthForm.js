@@ -67,16 +67,16 @@ export default function AuthForm({ onAuthSuccess }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
-          <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-blue-100">
-            <Users className="h-6 w-6 text-blue-600" />
+          <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/20">
+            <Users className="h-6 w-6 text-blue-600 dark:text-blue-400" />
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
             {isLogin ? 'Sign in to your account' : 'Create your organization'}
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
             Smart Client Manager
           </p>
         </div>
@@ -86,7 +86,7 @@ export default function AuthForm({ onAuthSuccess }) {
             {!isLogin && (
               <>
                 <div>
-                  <label htmlFor="orgName" className="block text-sm font-medium text-gray-700">
+                  <label htmlFor="orgName" className="form-label">
                     Organization Name
                   </label>
                   <input
@@ -94,14 +94,14 @@ export default function AuthForm({ onAuthSuccess }) {
                     name="orgName"
                     type="text"
                     required
-                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    className="form-input"
                     placeholder="e.g., FitLife Gym"
                     value={formData.orgName}
                     onChange={handleInputChange}
                   />
                 </div>
                 <div>
-                  <label htmlFor="fullName" className="block text-sm font-medium text-gray-700">
+                  <label htmlFor="fullName" className="form-label">
                     Admin Name
                   </label>
                   <input
@@ -109,7 +109,7 @@ export default function AuthForm({ onAuthSuccess }) {
                     name="fullName"
                     type="text"
                     required
-                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    className="form-input"
                     placeholder="Your full name"
                     value={formData.fullName}
                     onChange={handleInputChange}
@@ -119,7 +119,7 @@ export default function AuthForm({ onAuthSuccess }) {
             )}
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="email" className="form-label">
                 {isLogin ? 'Email or Phone' : 'Email'}
               </label>
               <input
@@ -128,7 +128,7 @@ export default function AuthForm({ onAuthSuccess }) {
                 type="email"
                 autoComplete="email"
                 required
-                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="form-input"
                 placeholder="admin@organization.com"
                 value={formData.email}
                 onChange={handleInputChange}
@@ -137,14 +137,14 @@ export default function AuthForm({ onAuthSuccess }) {
 
             {!isLogin && (
               <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="phone" className="form-label">
                   Phone
                 </label>
                 <input
                   id="phone"
                   name="phone"
                   type="tel"
-                  className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                  className="form-input"
                   placeholder="+1 (555) 123-4567"
                   value={formData.phone}
                   onChange={handleInputChange}
@@ -153,7 +153,7 @@ export default function AuthForm({ onAuthSuccess }) {
             )}
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="password" className="form-label">
                 Password
               </label>
               <input
@@ -162,7 +162,7 @@ export default function AuthForm({ onAuthSuccess }) {
                 type="password"
                 autoComplete="current-password"
                 required
-                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="form-input"
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={handleInputChange}
@@ -171,7 +171,7 @@ export default function AuthForm({ onAuthSuccess }) {
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-md text-sm">
               {error}
             </div>
           )}
@@ -180,7 +180,7 @@ export default function AuthForm({ onAuthSuccess }) {
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-colors"
+              className="btn-primary w-full flex justify-center"
             >
               {loading ? (
                 <div className="flex items-center">
@@ -197,7 +197,7 @@ export default function AuthForm({ onAuthSuccess }) {
             {isLogin && (
               <button
                 type="button"
-                className="text-sm text-blue-600 hover:text-blue-500"
+                className="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300"
               >
                 Forgot your password?
               </button>
@@ -206,7 +206,7 @@ export default function AuthForm({ onAuthSuccess }) {
               <button
                 type="button"
                 onClick={() => setIsLogin(!isLogin)}
-                className="text-blue-600 hover:text-blue-500 font-medium"
+                className="text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
               >
                 {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
               </button>
